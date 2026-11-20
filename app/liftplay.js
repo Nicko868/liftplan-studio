@@ -64,7 +64,8 @@ function lpCamera(T, t) {
   V3.az = C.az - 20 + 80 * lpEase(u);
   V3.el = 24 + 10 * Math.sin(Math.PI * u);
   V3.zoom = 1.15 - 0.2 * Math.sin(Math.PI * u);
-  V3.pan = [0, 0];
+  // lift the picture a little so the footer caption doesn't sit over the lift
+  const F = LP.focus || GL.focus, size = F ? Math.hypot(F[3] - F[0], F[4] - F[1], F[5] || 8) / 2 : 0; V3.pan = [0, -size * 0.1];
 }
 function lpReadout(st) {
   const S = st.S, cr = S.cranes[0], ev = evalCrane(cr, "pick"), C = REG.cranes[cr.model];
@@ -104,20 +105,22 @@ function lpBegin() {
   LP.focus = [Math.min(...P.map(p => p[0])) - 6, Math.min(...P.map(p => p[1])) - 6, 0, Math.max(...P.map(p => p[0])) + 6, Math.max(...P.map(p => p[1])) + 6, zMax];
   return true;
 }
-// Each frame only what moves is rebuilt (cranes, loads, rigging, a forklift on the lift, ropes, labels): the ground, the
-// site picture, buildings, mats and the rest are built once when the lift starts and kept. Rebuilding everything every
-// frame (ground textures included) held playback to a few frames a second.
+// Each frame only what moves is rebuilt: the still scenery (site items, buildings, mats, zones – everything in
+// plan.obstacles except a forklift working the lift) is built once when the lift starts and kept with its lines and
+// labels; each frame rebuilds the cranes with their hooks and ropes, the loads, the rigging and the forklift.
+// Rebuilding everything every frame (ground textures included) held playback to a few frames a second.
+const lpMoves = o => !!(o && o.fl);
 function lpBuildFrame() {
-  LP_TAG = true; let M; try { M = buildMesh("pick"); } finally { LP_TAG = false; }
-  if (!LP.still) { const Ms = { ...M, faces: M.faces.filter(f => !f._mv), lines: [], labels: [] }; glBuild(Ms);
-    LP.still = new THREE.Group(); for (const ch of [...GL.root.children]) { GL.root.remove(ch); LP.still.add(ch); } GL.root.parent.add(LP.still); }
-  glBuild({ ...M, faces: M.faces.filter(f => f._mv) }, { movingOnly: true });
+  const O = plan.obstacles;
+  if (!LP.still) { const L0 = plan.loads, C0 = plan.cranes, MS = shownMatIds(), sm = shownMatIds; let Ms;   // which mats show is decided with the real cranes
+    shownMatIds = () => MS; plan.loads = []; plan.cranes = []; plan.obstacles = O.filter(o => !lpMoves(o));
+    try { Ms = buildMesh("pick"); } finally { plan.loads = L0; plan.cranes = C0; plan.obstacles = O; shownMatIds = sm; }
+    glBuild({ ...Ms, lines: [], labels: [] }); LP.still = new THREE.Group(); for (const ch of [...GL.root.children]) { GL.root.remove(ch); LP.still.add(ch); } GL.root.parent.add(LP.still);
+    LP.stillLines = Ms.lines; LP.stillLabels = Ms.labels; LP.stillBounds = GL.bounds; }
+  let M; const MS = shownMatIds(), sm = shownMatIds; shownMatIds = () => MS; plan.obstacles = O.filter(lpMoves); try { M = buildMesh("pick"); } finally { plan.obstacles = O; shownMatIds = sm; }
+  GL.bounds = LP.stillBounds; glBuild({ ...M, lines: [...M.lines, ...(LP.stillLines || [])], labels: [...M.labels, ...(LP.stillLabels || [])] }, { movingOnly: true });
 }
-function lpDropStill() { if (!LP.still) return; LP.still.parent && LP.still.parent.remove(LP.still); LP.still.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && !o.material._keep) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m._keepMap && m.map) m.map.dispose(); m.dispose(); }); }); LP.still = null; }
-// faces from the things that move are marked while a Play frame is built
-let LP_TAG = false;
-window.addEventListener("load", () => { for (const fn of ["crane3D", "load3D", "rig3D", "forklift3D"]) { const f = window[fn]; if (typeof f !== "function") continue;
-  window[fn] = function (M, ...a) { if (!LP_TAG) return f.call(this, M, ...a); const n0 = M.faces.length; try { return f.call(this, M, ...a); } finally { for (let i = n0; i < M.faces.length; i++) M.faces[i]._mv = true; } }; } });
+function lpDropStill() { if (!LP.still) return; LP.still.parent && LP.still.parent.remove(LP.still); LP.still.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && !o.material._keep) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m._keepMap && m.map) m.map.dispose(); m.dispose(); }); }); LP.still = null; LP.stillLines = LP.stillLabels = null; }
 function lpEndLift() {
   lpDropStill();
   if (!LP.steps) return;
@@ -176,7 +179,12 @@ function lpUi() {
 #lpCap{background:rgba(22,32,42,.86);color:#fff;border-radius:10px;padding:10px 14px;box-shadow:0 6px 24px rgba(0,0,0,.25);width:100%;box-sizing:border-box}
 #lpCap .lpStep{font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.7}#lpCap .lpTxt{font-size:16px;font-weight:600;margin:2px 0 4px;line-height:1.3}
 #lpCap .lpRead{font:12px var(--mono, monospace);opacity:.85}#lpCap .lpBar{height:3px;background:rgba(255,255,255,.18);border-radius:2px;margin-top:8px;overflow:hidden}#lpCap .lpBar i{display:block;height:100%;background:#f0a04b}
-body.lpOn #view3d{pointer-events:none}body.lpOn #hint{display:none}`;
+body.lpOn #view3d{pointer-events:none}body.lpOn #hint{display:none}
+body.lpOn #lpBox{left:0;right:0;top:0;bottom:0;max-width:none;align-items:stretch;justify-content:space-between;gap:0;padding:10px 12px 0}
+body.lpOn #lpCtl{align-self:flex-end}
+body.lpOn #lpCap{border-radius:0;margin:0 -12px;width:auto;padding:7px 16px 9px;display:grid;grid-template-columns:auto 1fr;column-gap:14px;align-items:baseline;position:relative;box-shadow:0 -2px 12px rgba(0,0,0,.18)}
+body.lpOn #lpCap .lpStep{grid-row:1/3;white-space:nowrap;align-self:center}body.lpOn #lpCap .lpTxt{font-size:14px;margin:0}body.lpOn #lpCap .lpRead{font-size:11.5px}
+body.lpOn #lpCap .lpBar{position:absolute;left:0;right:0;top:0;margin:0;height:3px;border-radius:0}`;
   document.head.append(css);
   const sec = $("view3d")?.parentElement; if (sec && getComputedStyle(sec).position === "static") sec.style.position = "relative";
   { const _r3 = render3D; render3D = function (...a) { if (LP.on) return; const r = _r3.apply(this, a); try { lpUi(); } catch (e) { } return r; }; }

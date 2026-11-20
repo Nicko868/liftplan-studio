@@ -1110,7 +1110,7 @@ const LOCAL = (() => {
 // as in browser mode (CAP.local). Everything sits in one table, liftplan_docs (path = "<collection>/<id>", jsonb data);
 // only signed-in staff can read or write it (row level security). "?local" in the address = this browser only.
 // The publishable key below is meant to be public – the protection is the sign-in plus the table rules.
-const LP_VERSION = "2026-11-20 16:08 UTC";   // stamped by build.sh: build date + time (UTC)
+const LP_VERSION = "2026-11-20 16:44 UTC";   // stamped by build.sh: build date + time (UTC)
 const SB_CONFIG = { url: "https://zsdacfyuongmebpdltcw.supabase.co", key: "sb_publishable_ChUe-Mj-_ikynWd5ce57HA_humJSbm4", table: "liftplan_docs" };
 const CLOUD = (() => {
   if (typeof LOCAL === "undefined" || !LOCAL || !window.supabase || /[?&]local\b/.test(location.search)) return null;
@@ -14798,6 +14798,9 @@ const LS_CACHE = new Map();
 const lsCranes = ld => plan.cranes.filter(c => c.attach?.load === ld.id && REG.cranes[c.model]);
 const lsChart = cr => { const ch = REG.charts[cr.chartId]; return ch && ch.craneId === cr.model ? ch : null; };
 const lsBuild2 = ld => ld.rig?.arr === "build" && +ld.rig.cranes === 2;
+// a cached lift-steps result is only good for the same load and crane objects (a plan reopened or a lift switched has new
+// objects with the same ids – drawing or playing an old result moves the old objects, and nothing on screen moves)
+const lsCacheOk = (r, ld, cranes) => r.ld === ld && r.cranes.length === cranes.length && r.cranes.every((c, i) => c === cranes[i]) && (!r.fork || plan.obstacles.includes(r.fork));
 const lsFork = ld => (plan.obstacles || []).find(o => o.type === "forklift" && o.fl && o.fl.load === ld.id && typeof FORKLIFTS !== "undefined" && FORKLIFTS[o.fl.model]) || null;
 const lsFT = ld => lsCranes(ld).length === 1 && !!lsFork(ld);   // top and tail: one crane on the top, a forklift on the tail
 // a crane topping with a forklift on the tail hangs the top from its own rigging: no default two-leg sling set is made up for it
@@ -14832,7 +14835,7 @@ function liftSteps(ld) {
   if (!ld) return null; const cranes = lsCranes(ld); if (!cranes.length) return null;
   if (lsFT(ld)) return lsFTSteps(ld, cranes, lsFork(ld));
   const key = `${ld.id}|${plan.updated}|${plan.al}|${JSON.stringify(ld.steps || "")}|${ld.upend ?? ""}|${JSON.stringify(cranes.map(c => [c.x, c.y, c.L, c.chartId, c.heading, c.hookBlock, c.attach?.point]))}|${JSON.stringify([ld.pick, ld.set, ld.rig?.tilt])}`;
-  if (LS_CACHE.has(key)) return LS_CACHE.get(key); if (LS_CACHE.size > 60) LS_CACHE.clear();
+  { const hit = LS_CACHE.get(key); if (hit && lsCacheOk(hit, ld, cranes)) return hit; } if (LS_CACHE.size > 60) LS_CACHE.clear();
   normLoad(ld); const tp = travelPath(ld), C0 = cranes.map(c => REG.cranes[c.model]), build2 = lsBuild2(ld) && cranes.length === 2, up = lsUpend(ld);
   const carry = lsCarry(ld, tp, cranes), W = +ld.weight || 0, lim = +plan.site.ulim || (rule("crane.util") ?? 100), d = loadDims(ld);
   const pose = t => { if (!tp) return { x: ld.pick.x + (ld.set.x - ld.pick.x) * t, y: ld.pick.y + (ld.set.y - ld.pick.y) * t, rot: +ld.pick.rot || 0 }; const i = Math.round(t * (tp.pts.length - 1)); return { x: tp.pts[i][0], y: tp.pts[i][1], rot: tp.rots ? tp.rots[i] : (+ld.pick.rot || 0) }; };
@@ -14887,7 +14890,7 @@ function liftSteps(ld) {
 function lsFTSteps(ld, cranes, fo) {
   const c = cranes[0], C = REG.cranes[c.model], F = FORKLIFTS[fo.fl.model], fl = fo.fl;
   const key = `ft|${ld.id}|${plan.updated}|${plan.al}|${JSON.stringify(ld.steps || "")}|${ld.upend ?? ""}|${JSON.stringify([c.x, c.y, c.L, c.chartId, c.hookBlock, c.extra, fl, ld.pick, ld.set, ld.cog, ld.span, ld.weight, ld.rigWeight])}`;
-  if (LS_CACHE.has(key)) return LS_CACHE.get(key); if (LS_CACHE.size > 60) LS_CACHE.clear();
+  { const hit = LS_CACHE.get(key); if (hit && lsCacheOk(hit, ld, cranes)) return hit; } if (LS_CACHE.size > 60) LS_CACHE.clear();
   normLoad(ld); const d = loadDims(ld), W = +ld.weight || 0, rw = typeof rigW === "function" ? rigW(ld) : 0, total = W + rw, lim = +plan.site.ulim || (rule("crane.util") ?? 100), flim = rule("fork.util") ?? 100;
   const sp = tandemSpan(ld) || d.x * 0.9, xA = -sp / 2, xB = sp / 2, zl = liftPointZ(ld), supZ = fl.how === "hook" ? zl : 0, rh = ld.rig?.arr ? loadRigHeight(ld, true) : (+ld.tandemRig || 0) + zl, cl = +fl.c || F.c0;
   const cog = +ld.cog || 0, tailW = Math.max(0, Math.min(W, W * (cog - xA) / (xB - xA)));
@@ -15076,12 +15079,19 @@ function lsEnter(L, s, opt = {}) {
 }
 async function lsWith(L, s, fn) { const leave = lsEnter(L, s); try { return await fn(); } finally { leave(); } }
 // the plan of one step, framed on the lift
+// a crane's slew from one step to the next: the move from pick to set goes the way the plan says (load panel "Travel from
+// pick to set": shortest / clockwise / anticlockwise – ld.travelDir); small corrections during an upend take the short way
+function lsSlewDelta(a, b, p, q) {
+  let d = ((((q.brg - p.brg) % 360) + 540) % 360) - 180; if (Math.abs((+b.t || 0) - (+a.t || 0)) < 1e-6) return d;
+  const ld = plan.loads.find(l => l.id === q.c?.attach?.load), dir = ld?.travelDir || "short";
+  if (dir === "cw" && d < 0) d += 360; else if (dir === "ccw" && d > 0) d -= 360; return d;
+}
 // what moved in plan from the step before: the load's travel and turn, each crane's slew
 function lsPlanMove(prev, s) {
   if (!prev || Math.abs((+s.tilt || 0) - (+prev.tilt || 0)) > 0.5) return null;
   let dRot = ((+s.pose.rot || 0) - (+prev.pose.rot || 0)); dRot = ((dRot + 540) % 360) - 180;
   const dXY = Math.hypot(s.pose.x - prev.pose.x, s.pose.y - prev.pose.y), slews = [];
-  for (const q of s.per) { if (q.fork || q.rel) continue; const p = prev.per.find(x => x.c === q.c); if (!p || p.rel) continue; let dB = q.brg - p.brg; dB = ((dB + 540) % 360) - 180; if (Math.abs(dB) >= 0.5 || Math.abs(q.R - p.R) >= 0.1) slews.push({ q, p, dB, dR: q.R - p.R }); }
+  for (const q of s.per) { if (q.fork || q.rel) continue; const p = prev.per.find(x => x.c === q.c); if (!p || p.rel) continue; const dB = lsSlewDelta(prev, s, p, q); if (Math.abs(dB) >= 0.5 || Math.abs(q.R - p.R) >= 0.1) slews.push({ q, p, dB, dR: q.R - p.R }); }
   return Math.abs(dRot) >= 1 || dXY >= 0.2 || slews.some(x => Math.abs(x.dB) >= 0.5) ? { dRot, dXY, slews } : null;
 }
 // the move drawn on the plan the way the plan sheet draws a slew: the load's path round the crane on its slew arc (the
@@ -15090,7 +15100,7 @@ function lsPlanMove(prev, s) {
 // slew turns it) gets its own small arc at the load.
 function lsCarrier(prev, s) { const on = s.per.filter(q => !q.fork && !q.rel); if (on.length !== 1) return null; const q = on[0], p = prev.per.find(x => x.c === q.c); return p && !p.rel ? { q, p } : null; }
 function lsHookTurn(prev, s) { let dRot = ((+s.pose.rot || 0) - (+prev.pose.rot || 0)); dRot = ((dRot + 540) % 360) - 180; const cr = lsCarrier(prev, s); if (!cr) return dRot;
-  let dB = cr.q.brg - cr.p.brg; dB = ((dB + 540) % 360) - 180; let t = dRot - dB; t = ((t + 540) % 360) - 180; return t; }
+  const dB = lsSlewDelta(prev, s, cr.p, cr.q); let t = dRot - dB; t = ((t + 540) % 360) - 180; return t; }
 function lsMoveOverlay(sc, L, prev, s, mv, bb) {
   const ld = L.ld, d = loadDims(ld), col = "#d9661f", grey = "#7a8794", ts = 0.85;
   const foot = (P, tilt) => { const k = Math.cos((+tilt || 0) * D2R), xc = +ld.cog || 0;
@@ -15100,9 +15110,9 @@ function lsMoveOverlay(sc, L, prev, s, mv, bb) {
     sc.poly("DIMS", [[b[0] - u[0] * h + n[0] * h * 0.5, b[1] - u[1] * h + n[1] * h * 0.5], b, [b[0] - u[0] * h - n[0] * h * 0.5, b[1] - u[1] * h - n[1] * h * 0.5]], { w: 1.4, color: c }); };
   const readable = a => { a = ((a + 180) % 360 + 360) % 360 - 180; return a > 90 ? a - 180 : a < -90 ? a + 180 : a; };
   // the load's path: round the carrying crane, or straight
-  const cr = lsCarrier(prev, s), N = 36, poses = [];
+  const cr = lsCarrier(prev, s), N = 36, poses = [], DB = cr ? lsSlewDelta(prev, s, cr.p, cr.q) : 0;
   for (let i = 0; i <= N; i++) { const u = i / N, rot = lsAngLerp(+prev.pose.rot || 0, +s.pose.rot || 0, u);
-    if (cr) { const brg = lsAngLerp(cr.p.brg, cr.q.brg, u), R = cr.p.R + (cr.q.R - cr.p.R) * u, c = cr.q.c, hk = [c.x + R * Math.sin(brg * D2R), c.y + R * Math.cos(brg * D2R)];
+    if (cr) { const brg = cr.p.brg + DB * u, R = cr.p.R + (cr.q.R - cr.p.R) * u, c = cr.q.c, hk = [c.x + R * Math.sin(brg * D2R), c.y + R * Math.cos(brg * D2R)];
       const o0 = [prev.pose.x - cr.p.hook[0], prev.pose.y - cr.p.hook[1]], o1 = [s.pose.x - cr.q.hook[0], s.pose.y - cr.q.hook[1]];
       poses.push({ x: hk[0] + o0[0] + (o1[0] - o0[0]) * u, y: hk[1] + o0[1] + (o1[1] - o0[1]) * u, rot, hk, brg, R }); }
     else poses.push({ x: prev.pose.x + (s.pose.x - prev.pose.x) * u, y: prev.pose.y + (s.pose.y - prev.pose.y) * u, rot }); }
@@ -15113,7 +15123,7 @@ function lsMoveOverlay(sc, L, prev, s, mv, bb) {
   // the path (the hook's arc when a crane slews it round), arrow at the end, label along it
   const line = cr ? poses.map(q => q.hk) : poses.map(q => [q.x, q.y]); sc.poly("DIMS", line, { w: 1.4, color: col, dash: [0.7, 0.35] }); arrow(line[N - 2], line[N], col);
   const mid = poses[N / 2];
-  if (cr) { let dB = cr.q.brg - cr.p.brg; dB = ((dB + 540) % 360) - 180; const c = cr.q.c;
+  if (cr) { const dB = DB, c = cr.q.c;
     // the label goes where the arc is furthest from any crane (just outside the arc)
     let best = null; for (let i = 4; i <= N - 4; i++) { const q = poses[i], r = q.R + 2, pt = [c.x + r * Math.sin(q.brg * D2R), c.y + r * Math.cos(q.brg * D2R)], keep = [...plan.cranes.map(k => [k.x, k.y]), [prev.pose.x, prev.pose.y], [s.pose.x, s.pose.y], ...s.per.filter(x => x.hook).map(x => x.hook)], dmin = Math.min(...keep.map(k => Math.hypot(pt[0] - k[0], pt[1] - k[1]))) - (bb && (pt[0] < bb[0] + 4 || pt[0] > bb[2] - 4 || pt[1] < bb[1] + 3 || pt[1] > bb[3] - 2) ? 1e3 : 0); if (!best || dmin > best.d) best = { d: dmin, pt }; }
     sc.text("DIMS", best.pt, `slew ${fx(Math.abs(dB), 0)}°`, ts * 1.1, { bold: true, color: col }); }
@@ -15194,7 +15204,7 @@ function lsMoves(prev, s) {
       return { q, txt: m.length ? m.join(" · ") : "hold" }; }
     if (q.rel && p && p.rel) return { q, txt: "off the hook" };
     if (q.rel) return { q, txt: "lower off, unhook, hook clear" }; if (!p) return { q, txt: "hook on, take the weight" };
-    const m = [], dz = q.z - p.z, dR = q.R - p.R; let dB = q.brg - p.brg; dB = ((dB + 540) % 360) - 180;
+    const m = [], dz = q.z - p.z, dR = q.R - p.R, dB = lsSlewDelta(prev, s, p, q);
     if (Math.abs(dz) >= 0.1) m.push(`${dz > 0 ? "hoist" : "lower"} ${fx(Math.abs(dz), 1)} m`);
     if (Math.abs(dR) >= 0.1) m.push(`${dR > 0 ? "luff out" : "luff in"} ${fx(Math.abs(dR), 1)} m (R ${fx(p.R, 1)} → ${fx(q.R, 1)})`);
     if (Math.abs(dB) >= 0.5) m.push(`slew ${fx(Math.abs(dB), 0)}° ${dB > 0 ? "clockwise" : "anticlockwise"}`);
@@ -15562,10 +15572,17 @@ const lsTailCrane = ld => { const cr = lsCranes(ld); return cr.length === 2 && l
 // forklift driving in and backing away, the turn and move to the set point – the same numbers as the step sheets.
 const lsAngLerp = (a, b, u) => a + ((((b - a) % 360) + 540) % 360 - 180) * u;
 function lsLerpStep(a, b, u) {
+  const s0 = lsLerpStep0(a, b, u), cr = Math.abs((+b.t || 0) - (+a.t || 0)) > 1e-6 ? lsCarrier(a, b) : null; if (!cr) return s0;
+  // one crane carries it to the set point: the load swings round with the hook on the slew arc, turning on the hook as planned
+  const DB = lsSlewDelta(a, b, cr.p, cr.q), R = cr.p.R + (cr.q.R - cr.p.R) * u, brg = cr.p.brg + DB * u, c = cr.q.c, hk = [c.x + R * Math.sin(brg * D2R), c.y + R * Math.cos(brg * D2R)];
+  const rot = (+a.pose.rot || 0) + (DB + lsHookTurn(a, b)) * u, loc = rot2([a.pose.x - cr.p.hook[0], a.pose.y - cr.p.hook[1]], +a.pose.rot || 0), off = rot2(loc, -rot);
+  s0.pose = { x: hk[0] + off[0], y: hk[1] + off[1], rot }; return s0;
+}
+function lsLerpStep0(a, b, u) {
   const L = (x, y) => x + (y - x) * u, s = { ...b, pose: { x: L(a.pose.x, b.pose.x), y: L(a.pose.y, b.pose.y), rot: lsAngLerp(+a.pose.rot || 0, +b.pose.rot || 0, u) }, h: L(a.h, b.h), tilt: L(+a.tilt || 0, +b.tilt || 0), forkH: b.forkH != null ? L(a.forkH ?? b.forkH, b.forkH) : undefined };
   s.per = b.per.map(q => { const p = a.per.find(x => x.c === q.c) || q;
     if (q.fork) { const ctr = [L(p.ctr[0], q.ctr[0]), L(p.ctr[1], q.ctr[1])]; return { ...q, ctr, rot: lsAngLerp(p.rot, q.rot, u), forkH: L(p.forkH, q.forkH), rel: u < 0.5 ? p.rel : q.rel, util: u < 0.5 ? p.util : q.util }; }
-    const R = L(p.R, q.R), brg = lsAngLerp(p.brg, q.brg, u), c = q.c;
+    const R = L(p.R, q.R), brg = p.brg + lsSlewDelta(a, b, p, q) * u, c = q.c;
     return { ...q, R, brg, z: L(p.z, q.z), hook: [c.x + R * Math.sin(brg * D2R), c.y + R * Math.cos(brg * D2R)], rel: q.rel && u > 0.6 ? true : p.rel && u < 0.4 ? true : false, util: u < 0.5 ? p.util : q.util, hookLoad: u < 0.5 ? p.hookLoad : q.hookLoad, cap: u < 0.5 ? p.cap : q.cap }; });
   return s;
 }
@@ -17729,7 +17746,8 @@ function lpCamera(T, t) {
   V3.az = C.az - 20 + 80 * lpEase(u);
   V3.el = 24 + 10 * Math.sin(Math.PI * u);
   V3.zoom = 1.15 - 0.2 * Math.sin(Math.PI * u);
-  V3.pan = [0, 0];
+  // lift the picture a little so the footer caption doesn't sit over the lift
+  const F = LP.focus || GL.focus, size = F ? Math.hypot(F[3] - F[0], F[4] - F[1], F[5] || 8) / 2 : 0; V3.pan = [0, -size * 0.1];
 }
 function lpReadout(st) {
   const S = st.S, cr = S.cranes[0], ev = evalCrane(cr, "pick"), C = REG.cranes[cr.model];
@@ -17769,20 +17787,22 @@ function lpBegin() {
   LP.focus = [Math.min(...P.map(p => p[0])) - 6, Math.min(...P.map(p => p[1])) - 6, 0, Math.max(...P.map(p => p[0])) + 6, Math.max(...P.map(p => p[1])) + 6, zMax];
   return true;
 }
-// Each frame only what moves is rebuilt (cranes, loads, rigging, a forklift on the lift, ropes, labels): the ground, the
-// site picture, buildings, mats and the rest are built once when the lift starts and kept. Rebuilding everything every
-// frame (ground textures included) held playback to a few frames a second.
+// Each frame only what moves is rebuilt: the still scenery (site items, buildings, mats, zones – everything in
+// plan.obstacles except a forklift working the lift) is built once when the lift starts and kept with its lines and
+// labels; each frame rebuilds the cranes with their hooks and ropes, the loads, the rigging and the forklift.
+// Rebuilding everything every frame (ground textures included) held playback to a few frames a second.
+const lpMoves = o => !!(o && o.fl);
 function lpBuildFrame() {
-  LP_TAG = true; let M; try { M = buildMesh("pick"); } finally { LP_TAG = false; }
-  if (!LP.still) { const Ms = { ...M, faces: M.faces.filter(f => !f._mv), lines: [], labels: [] }; glBuild(Ms);
-    LP.still = new THREE.Group(); for (const ch of [...GL.root.children]) { GL.root.remove(ch); LP.still.add(ch); } GL.root.parent.add(LP.still); }
-  glBuild({ ...M, faces: M.faces.filter(f => f._mv) }, { movingOnly: true });
+  const O = plan.obstacles;
+  if (!LP.still) { const L0 = plan.loads, C0 = plan.cranes, MS = shownMatIds(), sm = shownMatIds; let Ms;   // which mats show is decided with the real cranes
+    shownMatIds = () => MS; plan.loads = []; plan.cranes = []; plan.obstacles = O.filter(o => !lpMoves(o));
+    try { Ms = buildMesh("pick"); } finally { plan.loads = L0; plan.cranes = C0; plan.obstacles = O; shownMatIds = sm; }
+    glBuild({ ...Ms, lines: [], labels: [] }); LP.still = new THREE.Group(); for (const ch of [...GL.root.children]) { GL.root.remove(ch); LP.still.add(ch); } GL.root.parent.add(LP.still);
+    LP.stillLines = Ms.lines; LP.stillLabels = Ms.labels; LP.stillBounds = GL.bounds; }
+  let M; const MS = shownMatIds(), sm = shownMatIds; shownMatIds = () => MS; plan.obstacles = O.filter(lpMoves); try { M = buildMesh("pick"); } finally { plan.obstacles = O; shownMatIds = sm; }
+  GL.bounds = LP.stillBounds; glBuild({ ...M, lines: [...M.lines, ...(LP.stillLines || [])], labels: [...M.labels, ...(LP.stillLabels || [])] }, { movingOnly: true });
 }
-function lpDropStill() { if (!LP.still) return; LP.still.parent && LP.still.parent.remove(LP.still); LP.still.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && !o.material._keep) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m._keepMap && m.map) m.map.dispose(); m.dispose(); }); }); LP.still = null; }
-// faces from the things that move are marked while a Play frame is built
-let LP_TAG = false;
-window.addEventListener("load", () => { for (const fn of ["crane3D", "load3D", "rig3D", "forklift3D"]) { const f = window[fn]; if (typeof f !== "function") continue;
-  window[fn] = function (M, ...a) { if (!LP_TAG) return f.call(this, M, ...a); const n0 = M.faces.length; try { return f.call(this, M, ...a); } finally { for (let i = n0; i < M.faces.length; i++) M.faces[i]._mv = true; } }; } });
+function lpDropStill() { if (!LP.still) return; LP.still.parent && LP.still.parent.remove(LP.still); LP.still.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && !o.material._keep) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m._keepMap && m.map) m.map.dispose(); m.dispose(); }); }); LP.still = null; LP.stillLines = LP.stillLabels = null; }
 function lpEndLift() {
   lpDropStill();
   if (!LP.steps) return;
@@ -17841,7 +17861,12 @@ function lpUi() {
 #lpCap{background:rgba(22,32,42,.86);color:#fff;border-radius:10px;padding:10px 14px;box-shadow:0 6px 24px rgba(0,0,0,.25);width:100%;box-sizing:border-box}
 #lpCap .lpStep{font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.7}#lpCap .lpTxt{font-size:16px;font-weight:600;margin:2px 0 4px;line-height:1.3}
 #lpCap .lpRead{font:12px var(--mono, monospace);opacity:.85}#lpCap .lpBar{height:3px;background:rgba(255,255,255,.18);border-radius:2px;margin-top:8px;overflow:hidden}#lpCap .lpBar i{display:block;height:100%;background:#f0a04b}
-body.lpOn #view3d{pointer-events:none}body.lpOn #hint{display:none}`;
+body.lpOn #view3d{pointer-events:none}body.lpOn #hint{display:none}
+body.lpOn #lpBox{left:0;right:0;top:0;bottom:0;max-width:none;align-items:stretch;justify-content:space-between;gap:0;padding:10px 12px 0}
+body.lpOn #lpCtl{align-self:flex-end}
+body.lpOn #lpCap{border-radius:0;margin:0 -12px;width:auto;padding:7px 16px 9px;display:grid;grid-template-columns:auto 1fr;column-gap:14px;align-items:baseline;position:relative;box-shadow:0 -2px 12px rgba(0,0,0,.18)}
+body.lpOn #lpCap .lpStep{grid-row:1/3;white-space:nowrap;align-self:center}body.lpOn #lpCap .lpTxt{font-size:14px;margin:0}body.lpOn #lpCap .lpRead{font-size:11.5px}
+body.lpOn #lpCap .lpBar{position:absolute;left:0;right:0;top:0;margin:0;height:3px;border-radius:0}`;
   document.head.append(css);
   const sec = $("view3d")?.parentElement; if (sec && getComputedStyle(sec).position === "static") sec.style.position = "relative";
   { const _r3 = render3D; render3D = function (...a) { if (LP.on) return; const r = _r3.apply(this, a); try { lpUi(); } catch (e) { } return r; }; }

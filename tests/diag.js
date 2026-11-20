@@ -455,6 +455,12 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
         // the projection's depth axis: a point on the cranes' side must be further away than the load
         const depthLoad = P0.x * pic.dir[0] + P0.y * pic.dir[1], depthCranes = cx * pic.dir[0] + cy * pic.dir[1]; return { ok: depthLoad < depthCranes - 0.5, side, depthLoad, depthCranes }; });
       check('Front view of a top and tail looks from the side away from the cranes even when the set point is swung far round', fv.ok, JSON.stringify(fv));
+      const sd = await p.evaluate(async () => { const out = {}; for (const dir of ['cw', 'ccw']) { openPlan(clone(SAMPLE_PLANS[1].plan)); const ld = plan.loads[0], c = plan.cranes.find(c => c.attach?.point !== 'B'), a = -150 * D2R, dx = ld.pick.x - c.x, dy = ld.pick.y - c.y;
+          ld.set = { ...ld.pick, x: c.x + dx * Math.cos(a) - dy * Math.sin(a), y: c.y + dx * Math.sin(a) + dy * Math.cos(a), rot: (+ld.pick.rot || 0) - 89 }; ld.travelDir = dir; renderAll();
+          const L = liftSteps(ld), i = L.steps.findIndex(s => lsPlanMove(L.steps[s.no - 2], s)), s = L.steps[i], pv = L.steps[i - 1], q = s.per.find(x => !x.rel), pq = pv.per.find(x => x.c === q.c);
+          const sh = await lsStageSheet(L, s); out[dir] = { d: Math.round(lsSlewDelta(pv, s, pq, q)), txt: lsMoves(pv, s).find(m => m.q.c === q.c).txt, head: (sh.svg.match(/TOP VIEW – [^<]*/) || [''])[0], mid: Math.round(((lsLerpStep(pv, s, 0.5).per.find(x => x.c === q.c).brg % 360) + 360) % 360) }; }
+        return out; });
+      check('The slew from pick to set follows the plan\'s direction (clockwise / anticlockwise) – steps, top view, Play lift', sd.cw.d > 0 && sd.ccw.d < 0 && Math.abs(sd.cw.d - sd.ccw.d) === 360 && /clockwise/.test(sd.cw.txt) && /slew \d+° anticlockwise/.test(sd.ccw.txt) && /slews \d+° anticlockwise/.test(sd.ccw.head) && sd.cw.mid !== sd.ccw.mid, JSON.stringify(sd));
       check('No script errors with the top view of a move', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
     // ---------- 14. after a top and tail the load is set down standing up: radius / slew, the tail crane off the hook, plan, elevation, the setting ----------
@@ -479,17 +485,19 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
       await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900); const res = [];
       for (const si of [0, 3]) {
-        await p.evaluate(si => { if ($('dStart').open) $('dStart').close(); openPlan(clone(SAMPLE_PLANS[si].plan)); renderAll(); }, si);
+        // another plan first, then this one: a reopened plan must play its own objects, not cached ones from before
+        await p.evaluate(si => { if ($('dStart').open) $('dStart').close(); openPlan(clone(SAMPLE_PLANS[si].plan)); renderAll(); liftSteps(plan.loads[0]); openPlan(clone(SAMPLE_PLANS[(si + 1) % 4].plan)); renderAll(); openPlan(clone(SAMPLE_PLANS[si].plan)); renderAll(); }, si);
         await p.getByRole('button', { name: '3D', exact: true }).first().click(); await p.waitForTimeout(600);
         const before = await p.evaluate(() => JSON.stringify([plan.loads.map(l => l.pick), plan.cranes.map(c => [c.tip || null, c.L]), plan.obstacles.filter(o => o.fl).map(o => [o.x, o.y, o.rot])]));
         await p.evaluate(() => lpStart(false)); await p.waitForTimeout(300);
         const mid = await p.evaluate(async () => { const out = { seq: !!LP.steps[0].seq, n: LP.steps[0].phases.length, steps: liftSteps(plan.loads[0]).steps.length, caps: [] };
           for (const f of [0.3, 0.6, 0.95]) { LP.paused = true; LP.tPause = lpTotal() * f; LP.built = false; await new Promise(r => setTimeout(r, 500)); out.caps.push(/step|done/i.test($('lpCap').innerText) && LS_DRAW === null); }
-          out.tilt = LP.seqCur ? LP.seqCur.s.tilt : null; return out; });
+          out.tilt = LP.seqCur ? LP.seqCur.s.tilt : null; out.own = !!LP.seqCur && LP.seqCur.L.ld === plan.loads[0] && LP.seqCur.L.cranes.every(c => plan.cranes.includes(c));
+          const cap = $('lpCap').getBoundingClientRect(), v = $('view3d').getBoundingClientRect(); out.footer = Math.abs(cap.bottom - v.bottom) < 3 && cap.width > v.width * 0.9 && cap.height < v.height * 0.2; out.still = !!LP.still; return out; });
         await p.evaluate(() => lpStop()); await p.waitForTimeout(300);
         const after = await p.evaluate(() => JSON.stringify([plan.loads.map(l => l.pick), plan.cranes.map(c => [c.tip || null, c.L]), plan.obstacles.filter(o => o.fl).map(o => [o.x, o.y, o.rot])]));
         res.push({ ...mid, same: before === after }); }
-      check('Play lift plays the lift steps (cranes top and tail, crane + forklift): one move per step, upright by the end, plan untouched after', res.every(r => r.seq && r.n === r.steps + 1 && r.caps.every(Boolean) && r.tilt >= 89 && r.same), JSON.stringify(res));
+      check('Play lift plays the lift steps (cranes top and tail, crane + forklift): one move per step, upright by the end, plan untouched after', res.every(r => r.seq && r.n === r.steps + 1 && r.caps.every(Boolean) && r.tilt >= 89 && r.same && r.own && r.footer && r.still), JSON.stringify(res));
       check('No script errors while playing the lift steps', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
   } catch (e) { check('Diagnostic run completed', false, e.message); }

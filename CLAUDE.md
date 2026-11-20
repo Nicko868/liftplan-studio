@@ -69,8 +69,13 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
 - Play lift (liftplay.js) plays a lift with steps step by step (wrappers installed on window "load"): interpolates between
   steps (`lsLerpStep`), draws through `lsEnter` (hooks at the step's R/slew, load tilted, forklift moved); caption = the
   step's per-machine instructions + live numbers. The plan is left exactly as it was.
-  Each Play frame rebuilds only what moves (faces from crane3D / load3D / rig3D / forklift3D are tagged `_mv`); the ground,
-  site picture and other scenery are built once per lift into `LP.still` (glBuild(M, {movingOnly:true}) skips the ground).
+  Play builds the still scenery once per lift into `LP.still` (plan.obstacles except a forklift on the lift; mats chosen with
+  the real cranes – shownMatIds is pinned) and each frame rebuilds the cranes with hooks / ropes, loads, rigging and the forklift
+  (glBuild(M, {movingOnly:true}) skips the ground). The caption is a footer bar across the bottom of the 3D view; controls
+  top right; the camera is lifted clear of the footer. Slews follow the load's "Travel from pick to set" (ld.travelDir,
+  `lsSlewDelta`) in the steps, top view and Play.
+- LS_CACHE results are only reused for the same load / crane objects (`lsCacheOk`): a reopened plan or a switched lift has
+  new objects with the same ids – reusing an old result drew / played the old objects and nothing on screen moved.
 - Load at set after an upend: `ld.set.tilt` (°; unset = automatic – top and tail sets it down at the upend angle, else level),
   load panel "Load at set". With it turned up: liftPointWorld(set) = the lift steps' final hooks (same radius as the step
   sheets), the tail crane is off the hook at set (share 0, hook where it let go, "SET – OFF THE HOOK"), plan footprint upright
