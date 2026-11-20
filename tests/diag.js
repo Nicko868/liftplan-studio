@@ -322,7 +322,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
     }
     // ---------- 9. shared database (Supabase, answered by a stand-in here): sign-in, first-time password, save, reload ----------
     {
-      const store = new Map(), UID = '11111111-1111-4111-8111-111111111111'; let pwSet = false, tokens = 0, pwPuts = 0, uname = '';
+      const store = new Map(), UID = '11111111-1111-4111-8111-111111111111'; let pwSet = false, tokens = 0, pwPuts = 0, uname = '', denyWrites = false;
       const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
       const user = () => ({ id: UID, aud: 'authenticated', role: 'authenticated', email: 'diag@example.com', user_metadata: pwSet ? { pw_set: true, name: uname } : {}, app_metadata: { provider: 'email' }, created_at: '2026-01-01T00:00:00Z' });
       const session = () => { const exp = Math.floor(Date.now() / 1000) + 3600; return { access_token: b64({ alg: 'HS256', typ: 'JWT' }) + '.' + b64({ sub: UID, exp, role: 'authenticated', aud: 'authenticated', email: 'diag@example.com' }) + '.sig', token_type: 'bearer', expires_in: 3600, expires_at: exp, refresh_token: 'diag-refresh', user: user() }; };
@@ -343,6 +343,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
             const off = +(u.searchParams.get('offset') || 0), lim = u.searchParams.get('limit'); rows = rows.slice(off, lim ? off + +lim : undefined);
             return one ? (rows.length ? json(rows[0]) : json({ code: 'PGRST116', message: 'no rows' }, 406)) : json(rows);
           }
+          if (m === 'POST' && denyWrites) return json({ code: '42501', details: null, hint: null, message: 'permission denied for table liftplan_docs' }, 401);
           if (m === 'POST') { let q = req.postDataJSON(); const arr = Array.isArray(q) ? q : [q]; arr.forEach(r => store.set(r.path, { ...r })); return json(one ? arr[0] : arr, 201); }
           if (m === 'DELETE') { store.delete(eq('path')); return route.fulfill({ status: 204, headers: H }); }
         }
@@ -377,6 +378,8 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       g = await q.evaluate(id => [$('dSignIn').open, planIndex.some(x => x.id === id && x.name === 'Shared plan'), ($('bAccount') || {}).textContent, $('plansNote') ? (renderPlans(), $('plansNote').textContent) : ''], pid);
       g.push(await q.evaluate(() => !!$('bAccount2') && $('dStart').contains($('bAccount2')))); await q.click('#bAccount2'); await q.waitForTimeout(300); await shot(q, '92_account');
       check('Next visit: still signed in, no password prompt, the shared plan is listed', fresh === 99 && !g[0] && g[1] && /Diag Tester/.test(g[2] || '') && /shared database/.test(g[3]) && g[4] && tokens === 1, JSON.stringify([fresh, g, tokens]));
+      denyWrites = true; const shown = await q.evaluate(async () => { let threw = false; try { await CAP.db.doc('plans/denied').set({ name: 'x' }); } catch (e) { threw = true; } return [threw, $('toast').hidden ? '' : $('toast').textContent]; }); denyWrites = false;
+      check('A save the database refuses is shown to the user, not swallowed', shown[0] && /Couldn't save to the shared database.*permissions/.test(shown[1]), JSON.stringify(shown));
       const errs = errs1.concat(q._errs.filter(e => !/WebSocket|realtime/i.test(e)));
       check('No script errors in shared mode', !errs.length, errs.slice(0, 3).join(' | '));
       await ctx.close();

@@ -16,6 +16,15 @@ const CLOUD = (() => {
   const nameOf = u => (u && (u.user_metadata?.name || (u.email || "").split("@")[0])) || "";
   const collOf = path => path.slice(0, path.lastIndexOf("/"));
 
+  // ---------- problems talking to the database are shown, not swallowed ----------
+  let lastErr = 0;
+  function dbError(e, what) {
+    const t = String((e && (e.message || e.code)) || e || "");
+    const why = /42501|permission denied|row-level security/i.test(t) ? "the database refused it (permissions)" : /Failed to fetch|NetworkError|network/i.test(t) ? "no connection to the shared database" : t.slice(0, 120);
+    console.warn("Shared database:", what, e);
+    if (Date.now() - lastErr > 4000) { lastErr = Date.now(); try { toast("Couldn't " + what + " – " + why, 7000); } catch (x) { } }
+    return e;
+  }
   // ---------- documents: a cache per collection, kept up to date by realtime ----------
   const cache = {}, listeners = {}, loading = {};
   const docsOf = coll => [...(cache[coll] || new Map()).entries()].map(([path, r]) => ({ id: path.slice(coll.length + 1), data: () => r.data }));
@@ -24,7 +33,7 @@ const CLOUD = (() => {
     const m = new Map();
     for (let from = 0; ; from += 500) {
       const { data, error } = await sb.from(T).select("path,data,updated_at").eq("coll", coll).order("path").range(from, from + 499);
-      if (error) throw error;
+      if (error) throw dbError(error, "load " + coll);
       data.forEach(r => m.set(r.path, { data: r.data, at: Date.parse(r.updated_at) }));
       if (data.length < 500) break;
     }
@@ -46,17 +55,17 @@ const CLOUD = (() => {
         set: async v => {
           await C.ready; const data = JSON.parse(JSON.stringify(v));
           const { data: row, error } = await sb.from(T).upsert({ path, coll, data, updated_at: new Date().toISOString(), updated_by: C.user.id }).select("updated_at").single();
-          if (error) throw error;
+          if (error) throw dbError(error, "save to the shared database");
           if (cache[coll]) { cache[coll].set(path, { data, at: Date.parse(row.updated_at) }); notify(coll); }
         },
         delete: async () => {
           await C.ready; const { error } = await sb.from(T).delete().eq("path", path);
-          if (error) throw error;
+          if (error) throw dbError(error, "delete from the shared database");
           if (cache[coll] && cache[coll].delete(path)) notify(coll);
         },
         get: async () => {   // always fresh from the database (used to spot a colleague's newer save)
           await C.ready; const { data, error } = await sb.from(T).select("data").eq("path", path).maybeSingle();
-          if (error) throw error;
+          if (error) throw dbError(error, "read from the shared database");
           return { exists: !!data, data: () => data ? data.data : undefined };
         }
       };
