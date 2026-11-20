@@ -12,7 +12,7 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   later file must run on `window` "load", never `setTimeout`.
 - Run `node --check` on every changed `.js` file before building.
 - Diagnostics: `NODE_PATH=<global node_modules> node tests/diag.js` (Playwright + Chromium) – must stay all PASS
-  (84/84 since the load stands up at set). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
+  (87/87 since Play lift plays the steps). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
   the file with `?local` (browser-only mode); scenario 9 tests shared mode against a stand-in for Supabase.
 - Storage: all saving goes through `CAP.db` (collection / doc / onSnapshot).
   - Shared mode (default outside claude.ai): `app/cloud.js` – Supabase project `liftplan-studio`
@@ -60,8 +60,15 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   limit Rules `fork.util`. Models are data in FORKLIFTS (H16XD6 from Hyster's spec sheet; axle model reproduces its rated axle loads).
   "Tail with a forklift…" on the checks panel for a one-crane load ≥ 6 m long. No default bridle is made up for it (rigShown).
 - A stage where the load turns / travels in plan or a crane slews (same tilt as the step before – `lsPlanMove`) gets a TOP VIEW
-  of the move (load before dashed, now solid, turn arc, path, slew arcs) beside a narrower front view; the crane carrying alone
-  is told to "turn the load N° … on the hook (tag lines)". Vertical-only stages keep the full-width front view.
+  of the move drawn like the plan sheet's slew (Nicko's 600 t LNG plan is the reference): the load's path round the carrying
+  crane on its slew arc at the hook radius, ghosts along it, before dashed / now solid, "slew N°" placed clear of the cranes,
+  and a small arc for any turn ON THE HOOK (rotation beyond what the slew gives – `lsHookTurn`), beside a narrower front view.
+  Vertical-only stages keep the full-width front view.
+- Front views look from the side away from the cranes, decided from the PICK position for upends (so the load is always in
+  front of the cranes, wherever the set point is).
+- Play lift (liftplay.js) plays a lift with steps step by step (wrappers installed on window "load"): interpolates between
+  steps (`lsLerpStep`), draws through `lsEnter` (hooks at the step's R/slew, load tilted, forklift moved); caption = the
+  step's per-machine instructions + live numbers. The plan is left exactly as it was.
 - Load at set after an upend: `ld.set.tilt` (°; unset = automatic – top and tail sets it down at the upend angle, else level),
   load panel "Load at set". With it turned up: liftPointWorld(set) = the lift steps' final hooks (same radius as the step
   sheets), the tail crane is off the hook at set (share 0, hook where it let go, "SET – OFF THE HOOK"), plan footprint upright

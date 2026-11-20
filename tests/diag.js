@@ -446,8 +446,15 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
         openPlan(clone(SAMPLE_PLANS[0].plan)); const ld = plan.loads[0]; ld.set = { ...ld.pick, rot: (+ld.pick.rot || 0) + 90, x: ld.pick.x + 3, y: ld.pick.y + 2 }; renderAll();
         const L = liftSteps(ld), mvIdx = L.steps.findIndex(s => lsPlanMove(L.steps[s.no - 2], s)), s = L.steps[mvIdx], txt = lsMoves(L.steps[s.no - 2], s).map(m => m.txt).join(' | ');
         const sh = await buildSheets(), st = sh.filter(x => /lift_sequence.*stage_/.test(x.name)), withTop = st.filter(x => /TOP VIEW/.test(x.svg)).map(x => x.name);
-        return { mvName: s && s.name, upendSteps: L.steps.filter(q => q.tilt > 0 && q.tilt < 90).every(q => !lsPlanMove(L.steps[q.no - 2], q)), txt, withTop, turned: /TOP VIEW – load turned 90° clockwise/.test(st[mvIdx]?.svg || '') }; });
-      check('A load turned / moved to its set point after the upend: that stage gets a top view of the turn, the move and the slew, and the crane is told to turn the load', /set position/.test(g.mvName || '') && g.upendSteps && /turn the load 90° clockwise/.test(g.txt) && g.withTop.length === 1 && g.turned, JSON.stringify(g));
+        return { mvName: s && s.name, upendSteps: L.steps.filter(q => q.tilt > 0 && q.tilt < 90).every(q => !lsPlanMove(L.steps[q.no - 2], q)), txt, withTop, turned: /TOP VIEW – .*slews \d+° clockwise.*load turned \d+° clockwise on the hook/.test(st[mvIdx]?.svg || '') }; });
+      check('A load turned / moved to its set point after the upend: that stage gets a top view of the turn, the move and the slew, and the crane is told to turn the load', /set position/.test(g.mvName || '') && g.upendSteps && /turn the load \d+° clockwise on the hook/.test(g.txt) && g.withTop.length === 1 && g.turned, JSON.stringify(g));
+      const fv = await p.evaluate(async () => { openPlan(clone(SAMPLE_PLANS[1].plan)); const ld = plan.loads[0], c = plan.cranes.find(c => c.attach?.point !== 'B'), a = -150 * D2R, dx = ld.pick.x - c.x, dy = ld.pick.y - c.y;
+        ld.set = { ...ld.pick, x: c.x + dx * Math.cos(a) - dy * Math.sin(a), y: c.y + dx * Math.sin(a) + dy * Math.cos(a), rot: (+ld.pick.rot || 0) - 89 }; renderAll(); const L = liftSteps(ld), s = L.steps[4];
+        let seen = null; const _bm2 = buildMesh; const pic = await lsCadFront(L, s, 1200, 800); const P0 = L.steps[0].pose, cx = L.cranes.reduce((q, k) => q + k.x, 0) / 2, cy = L.cranes.reduce((q, k) => q + k.y, 0) / 2;
+        const n = rot2([0, 1], -(P0.rot || 0)), side = Math.sign((cx - P0.x) * n[0] + (cy - P0.y) * n[1]);
+        // the projection's depth axis: a point on the cranes' side must be further away than the load
+        const depthLoad = P0.x * pic.dir[0] + P0.y * pic.dir[1], depthCranes = cx * pic.dir[0] + cy * pic.dir[1]; return { ok: depthLoad < depthCranes - 0.5, side, depthLoad, depthCranes }; });
+      check('Front view of a top and tail looks from the side away from the cranes even when the set point is swung far round', fv.ok, JSON.stringify(fv));
       check('No script errors with the top view of a move', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
     // ---------- 14. after a top and tail the load is set down standing up: radius / slew, the tail crane off the hook, plan, elevation, the setting ----------
@@ -466,6 +473,24 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
         delete ld.set.tilt; LS_CACHE.clear(); return out; });
       check('Top and tail: the load is set down standing up – crane radius at set from the lift steps, the tail crane off the hook (carries nothing), upright in the elevation, round in plan; "Load at set" can make it level', g.auto === 90 && Math.abs(g.r1[0] - g.r1[1]) < 0.05 && g.share[1] === 0 && g.share[0] > 30 && g.rel && g.upright && g.round && g.field && g.level, JSON.stringify(g));
       check('No script errors with the load standing at set', !p._errs.length, p._errs.slice(0, 3).join(' | '));
+    }
+    // ---------- 15. Play lift plays the lift steps (top and tail with cranes, with a forklift) and leaves the plan as it was ----------
+    {
+      p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900); const res = [];
+      for (const si of [0, 3]) {
+        await p.evaluate(si => { if ($('dStart').open) $('dStart').close(); openPlan(clone(SAMPLE_PLANS[si].plan)); renderAll(); }, si);
+        await p.getByRole('button', { name: '3D', exact: true }).first().click(); await p.waitForTimeout(600);
+        const before = await p.evaluate(() => JSON.stringify([plan.loads.map(l => l.pick), plan.cranes.map(c => [c.tip || null, c.L]), plan.obstacles.filter(o => o.fl).map(o => [o.x, o.y, o.rot])]));
+        await p.evaluate(() => lpStart(false)); await p.waitForTimeout(300);
+        const mid = await p.evaluate(async () => { const out = { seq: !!LP.steps[0].seq, n: LP.steps[0].phases.length, steps: liftSteps(plan.loads[0]).steps.length, caps: [] };
+          for (const f of [0.3, 0.6, 0.95]) { LP.paused = true; LP.tPause = lpTotal() * f; LP.built = false; await new Promise(r => setTimeout(r, 500)); out.caps.push(/step|done/i.test($('lpCap').innerText) && LS_DRAW === null); }
+          out.tilt = LP.seqCur ? LP.seqCur.s.tilt : null; return out; });
+        await p.evaluate(() => lpStop()); await p.waitForTimeout(300);
+        const after = await p.evaluate(() => JSON.stringify([plan.loads.map(l => l.pick), plan.cranes.map(c => [c.tip || null, c.L]), plan.obstacles.filter(o => o.fl).map(o => [o.x, o.y, o.rot])]));
+        res.push({ ...mid, same: before === after }); }
+      check('Play lift plays the lift steps (cranes top and tail, crane + forklift): one move per step, upright by the end, plan untouched after', res.every(r => r.seq && r.n === r.steps + 1 && r.caps.every(Boolean) && r.tilt >= 89 && r.same), JSON.stringify(res));
+      check('No script errors while playing the lift steps', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();
