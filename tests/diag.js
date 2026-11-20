@@ -400,6 +400,17 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       check('Sample plans: top and tail (2) and a moving tandem lift open from the start screen and give their full sheet sets', n >= 3 && got.filter(g => g.up).length >= 2 && got.some(g => !g.up) && got.every(g => g.steps >= 7 && g.bad === 0 && g.stages >= g.steps && g.ssb === 0 && g.saved && g.open), JSON.stringify(got));
       check('No script errors with the samples', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
+    // ---------- 11. the sample plans are in the plans list – once; a deleted sample stays deleted ----------
+    {
+      const ctx = await b.newContext({ viewport: { width: 1400, height: 900 } }); p = await ctx.newPage(); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(1800);
+      const g1 = await p.evaluate(() => planIndex.filter(x => /^sample-/.test(x.id)).map(x => x.name));
+      await p.evaluate(async () => { await CAP.db.doc('plans/sample-2').delete(); }); await p.reload(); await p.waitForTimeout(1800);
+      const g2 = await p.evaluate(() => [planIndex.filter(x => /^sample-/.test(x.id)).length, planIndex.length, $('stList').textContent.includes('Sample – Top and tail')]);
+      const g3 = await p.evaluate(() => { const s = planIndex.find(x => x.id === 'sample-1'); openPlan(clone(s)); const L = liftSteps(plan.loads[0]); return [plan.name, L && L.steps.length, L && L.steps.every(q => q.ok)]; });
+      check('Sample plans are in Lift plans (once), a deleted one stays deleted, and they open as normal plans', g1.length === 3 && g1.every(n => /^Sample – /.test(n)) && g2[0] === 2 && g2[1] === 2 && g2[2] && g3[1] >= 7 && g3[2], JSON.stringify([g1, g2, g3]));
+      await ctx.close();
+    }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ date: new Date().toISOString(), file: FILE, results }, null, 1));

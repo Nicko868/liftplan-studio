@@ -21,3 +21,24 @@ const SAMPLE_PLANS = [{"title":"Top and tail – 30 t spud leg upend","desc":"Tw
     d.close(); if ($("dStart").open) $("dStart").close(); openPlan(p, false); try { fitView(); } catch (x) { }
     toast("Sample opened – Export → PDF shows the sheets. Nothing is saved unless you press Save.", 5000); });
 })();
+// The samples are also put in the plans list itself – once per database (shared or this browser), so everyone sees
+// them under Lift plans. A meta/samples record remembers which have been added: a sample someone deletes stays deleted,
+// and a sample added to SAMPLE_PLANS later is put in the next time the app opens.
+const SAMPLE_ID = i => "sample-" + (i + 1);
+async function seedSamples() {
+  if (!CAP.db) return 0;
+  const m = await CAP.db.doc("meta/samples").get(), done = new Set(m.exists ? (m.data().ids || []) : []); let n = 0;
+  for (let i = 0; i < SAMPLE_PLANS.length; i++) {
+    const id = SAMPLE_ID(i); if (done.has(id)) continue;
+    const s = SAMPLE_PLANS[i], p = clone(s.plan); p.id = id; p.name = "Sample – " + s.title; p.meta = { ...(p.meta || {}), notes: p.meta?.notes || s.desc };
+    p.updated = Date.now(); p.rev = 1; p.createdAt = p.savedAt = Date.now(); p.createdBy = p.savedBy = (typeof TEAM !== "undefined" && TEAM.me) || null;
+    await CAP.db.doc("plans/" + id).set(p); done.add(id); n++;
+  }
+  if (n || !m.exists) await CAP.db.doc("meta/samples").set({ ids: [...done], at: Date.now() });
+  return n;
+}
+window.addEventListener("load", () => { (async () => {
+  for (let k = 0; k < 100 && !CAP.db; k++) await new Promise(r => setTimeout(r, 100));   // inside claude.ai the db arrives a moment later
+  if (typeof CLOUD !== "undefined" && CLOUD) await CLOUD.ready;
+  const n = await seedSamples(); if (n) toast(`${n} sample plan${n > 1 ? "s" : ""} added to Lift plans`, 4000);
+})().catch(e => console.warn("samples", e)); });
