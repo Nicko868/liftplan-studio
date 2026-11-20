@@ -450,6 +450,23 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       check('A load turned / moved to its set point after the upend: that stage gets a top view of the turn, the move and the slew, and the crane is told to turn the load', /set position/.test(g.mvName || '') && g.upendSteps && /turn the load 90° clockwise/.test(g.txt) && g.withTop.length === 1 && g.turned, JSON.stringify(g));
       check('No script errors with the top view of a move', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
+    // ---------- 14. after a top and tail the load is set down standing up: radius / slew, the tail crane off the hook, plan, elevation, the setting ----------
+    {
+      p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900);
+      const g = await p.evaluate(async () => {
+        openPlan(clone(SAMPLE_PLANS[0].plan)); const ld = plan.loads[0]; ld.set = { ...ld.pick, rot: (+ld.pick.rot || 0) + 90, x: ld.pick.x + 3, y: ld.pick.y + 2 }; renderAll();
+        const L = liftSteps(ld), last = L.steps[L.steps.length - 1], [c1, c2] = plan.cranes, e1 = evalCrane(c1, 'set'), e2 = evalCrane(c2, 'set'), q1 = last.per.find(q => q.c === c1);
+        const out = { auto: lsSetTilt(ld), r1: [+e1.R.toFixed(2), +q1.R.toFixed(2)], share: [+e1.share.toFixed(2), +e2.share.toFixed(2)], rel: !!e2.released };
+        const el = elevScene(c1, 'set'); let lo = 1e9, hi = -1e9, x0 = 1e9, x1 = -1e9; for (const it of el.scene.items) if (it.L === 'LOAD' && it.t === 'poly') for (const pt of it.pts) { lo = Math.min(lo, pt[1]); hi = Math.max(hi, pt[1]); x0 = Math.min(x0, pt[0]); x1 = Math.max(x1, pt[0]); }
+        out.upright = hi - lo > 20 && x1 - x0 < 5;
+        const sc = loadScene(ld, 'set'); out.round = sc.items.some(it => it.t === 'circle' && it.L === 'LOAD');
+        sel = { kind: 'load', id: ld.id }; renderProps(); out.field = !!$('l_setT');
+        $('l_setT').value = '0'; $('l_setT').dispatchEvent(new Event('change')); out.level = lsSetTilt(ld) === 0 && !evalCrane(c2, 'set').released;
+        delete ld.set.tilt; LS_CACHE.clear(); return out; });
+      check('Top and tail: the load is set down standing up – crane radius at set from the lift steps, the tail crane off the hook (carries nothing), upright in the elevation, round in plan; "Load at set" can make it level', g.auto === 90 && Math.abs(g.r1[0] - g.r1[1]) < 0.05 && g.share[1] === 0 && g.share[0] > 30 && g.rel && g.upright && g.round && g.field && g.level, JSON.stringify(g));
+      check('No script errors with the load standing at set', !p._errs.length, p._errs.slice(0, 3).join(' | '));
+    }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ date: new Date().toISOString(), file: FILE, results }, null, 1));

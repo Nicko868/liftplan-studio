@@ -12,7 +12,7 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   later file must run on `window` "load", never `setTimeout`.
 - Run `node --check` on every changed `.js` file before building.
 - Diagnostics: `NODE_PATH=<global node_modules> node tests/diag.js` (Playwright + Chromium) – must stay all PASS
-  (82/82 since the top view of moves). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
+  (84/84 since the load stands up at set). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
   the file with `?local` (browser-only mode); scenario 9 tests shared mode against a stand-in for Supabase.
 - Storage: all saving goes through `CAP.db` (collection / doc / onSnapshot).
   - Shared mode (default outside claude.ai): `app/cloud.js` – Supabase project `liftplan-studio`
@@ -62,4 +62,8 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
 - A stage where the load turns / travels in plan or a crane slews (same tilt as the step before – `lsPlanMove`) gets a TOP VIEW
   of the move (load before dashed, now solid, turn arc, path, slew arcs) beside a narrower front view; the crane carrying alone
   is told to "turn the load N° … on the hook (tag lines)". Vertical-only stages keep the full-width front view.
+- Load at set after an upend: `ld.set.tilt` (°; unset = automatic – top and tail sets it down at the upend angle, else level),
+  load panel "Load at set". With it turned up: liftPointWorld(set) = the lift steps' final hooks (same radius as the step
+  sheets), the tail crane is off the hook at set (share 0, hook where it let go, "SET – OFF THE HOOK"), plan footprint upright
+  (round for round loads), travel ghosts and clash checks use that footprint, set elevations and 3D show it upright.
 - Known gaps: LTM 1230 / LTM 1130 charts not in the crane library yet; vessels have no hold model; a callout can still cross a sling line.
