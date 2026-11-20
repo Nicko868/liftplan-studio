@@ -12,11 +12,20 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   later file must run on `window` "load", never `setTimeout`.
 - Run `node --check` on every changed `.js` file before building.
 - Diagnostics: `NODE_PATH=<global node_modules> node tests/diag.js` (Playwright + Chromium) – must stay all PASS
-  (65/65 at hand-over). Add a diagnostic scenario for every new feature, not only regressions.
-- Storage: `app/local.js` = browser (IndexedDB) mode; inside claude.ai the artifact runtime db is used. All saving goes
-  through `CAP.db` (collection / doc / onSnapshot). A Supabase mode (staff sign-in, shared plans) is the planned next step –
-  same steps as the SSB Vessel Schedule app, done one confirmed step at a time.
-- Never put job data, client data or any key in `index.html` (the repo is public). The Anthropic key is typed in by each user.
+  (71/71 since shared mode). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
+  the file with `?local` (browser-only mode); scenario 9 tests shared mode against a stand-in for Supabase.
+- Storage: all saving goes through `CAP.db` (collection / doc / onSnapshot).
+  - Shared mode (default outside claude.ai): `app/cloud.js` – Supabase project `liftplan-studio`
+    (https://zsdacfyuongmebpdltcw.supabase.co), one table `liftplan_docs` (path = "<collection>/<id>", coll, jsonb data,
+    updated_at, updated_by), row level security = signed-in staff only, realtime on. Sign-in screen; first sign-in
+    forces the user to choose their own password (user_metadata.pw_set); "Forgot your password?" sends a reset link.
+    Names for "saved by" come from `people/<user id>` docs. Pictures stay inside the documents (CAP.local is true).
+  - Browser-only mode: `app/local.js` (IndexedDB), used with `?local` in the address. Inside claude.ai the artifact
+    runtime db is used.
+  - Users are added by Nicko in Supabase → Authentication → Users → Add user (Auto Confirm, temporary password).
+- Never put job data, client data or a secret key in `index.html` (the repo is public). The only key allowed in it is the
+  Supabase **publishable** key (it is public by design; the protection is the sign-in + table rules). Never the
+  secret / service_role key. The Anthropic key is typed in by each user.
 
 ## Standing rules from Nicko
 - Act as a developer thinking across the whole app: data-driven, app-wide, no one-off code. Don't just reorganise his words.

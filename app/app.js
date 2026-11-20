@@ -11,7 +11,7 @@ const COLORS = ["#1f5fa8", "#b0272b", "#1d7a4f", "#7a2bc2", "#b86a00"];
 const CAP = { db: null, assets: null, sample: null, downloads: null, sampleImages: null };
 async function initCaps() {
   const use = n => (window.claude && window.claude.use) ? window.claude.use(n).catch(() => null) : Promise.resolve(null);
-  if (typeof LOCAL !== "undefined" && LOCAL) { CAP.local = true; CAP.db = LOCAL.db; CAP.assets = LOCAL.assets; CAP.downloads = LOCAL.downloads; CAP.sample = null; }
+  if (typeof LOCAL !== "undefined" && LOCAL) { CAP.local = true; CAP.shared = typeof CLOUD !== "undefined" && !!CLOUD; CAP.db = LOCAL.db; CAP.assets = LOCAL.assets; CAP.downloads = LOCAL.downloads; CAP.sample = null; }
   else [CAP.db, CAP.assets, CAP.sample, CAP.downloads] = await Promise.all([use("db"), use("assets"), use("sample"), use("downloads")]);
   if (CAP.sample) { try { CAP.sampleImages = (await CAP.sample.limits()).images || null; } catch (e) { CAP.sampleImages = null; } }
   $("bgUpload").disabled = false;
@@ -1371,7 +1371,7 @@ $("bSave").onclick = savePlan;
 $("bNew").onclick = () => { if (dirty && plan.cranes.length + plan.loads.length && !$("bNew").dataset.armed) { $("bNew").dataset.armed = "1"; $("bNew").textContent = "Discard changes?"; setTimeout(() => { delete $("bNew").dataset.armed; $("bNew").textContent = "New"; }, 3000); return; } delete $("bNew").dataset.armed; $("bNew").textContent = "New"; openPlan(blankPlan()); view.cx = 0; view.cy = 0; view.s = 12; renderSite(); };
 $("bPlans").onclick = () => { renderPlans(); $("dPlans").showModal(); };
 function renderPlans() {
-  $("plansNote").textContent = CAP.local ? "Plans are saved in this browser on this computer. Use Back up to keep a copy or move plans to another computer or person." : CAP.db ? "Saved lift plans are shared with everyone who can open this app." : "Saved plans aren't available in this view.";
+  $("plansNote").textContent = CAP.shared ? "Plans are saved in the team's shared database – everyone who is signed in sees them, and a colleague's save shows up without refreshing. Back up keeps a copy as a file." : CAP.local ? "Plans are saved in this browser on this computer. Use Back up to keep a copy or move plans to another computer or person." : CAP.db ? "Saved lift plans are shared with everyone who can open this app." : "Saved plans aren't available in this view.";
   const list = [...planIndex].sort((a, b) => (b.updated || 0) - (a.updated || 0));
   $("plansGrid").innerHTML = list.map(p => `<div class="pcard"><b>${escH(p.name)}</b><span class="small">${escH(p.meta?.project || "")} · ${(p.cranes || []).length} crane(s) · ${new Date(p.updated || 0).toLocaleString("en-GB")}</span>
     <div class="btnrow"><button data-open="${p.id}" class="pri">Open</button><button data-copy="${p.id}">Duplicate</button><button data-del="${p.id}">Delete</button></div></div>`).join("") || `<p class="small">No saved plans yet. Press Save to store the current plan.</p>`;

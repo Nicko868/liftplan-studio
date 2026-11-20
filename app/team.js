@@ -1,6 +1,6 @@
 // ================= Team use: who created / last saved each plan, and a warning before overwriting someone else's newer save =================
 const TEAM = { me: null, user: null, names: {} };
-(async () => { try { if (typeof LOCAL !== "undefined" && LOCAL) return; const u = await claude.use("user"); if (!u) return; TEAM.user = u; const me = await u.me(); TEAM.me = me && me.id ? me.id : null; if (TEAM.me && me.name) TEAM.names[TEAM.me] = me.name; } catch (e) { console.warn(e); } })();
+(async () => { try { if (typeof CLOUD !== "undefined" && CLOUD) { await CLOUD.ready; TEAM.user = CLOUD.people; TEAM.me = CLOUD.user.id; TEAM.names[TEAM.me] = CLOUD.myName(); return; } if (typeof LOCAL !== "undefined" && LOCAL) return; const u = await claude.use("user"); if (!u) return; TEAM.user = u; const me = await u.me(); TEAM.me = me && me.id ? me.id : null; if (TEAM.me && me.name) TEAM.names[TEAM.me] = me.name; } catch (e) { console.warn(e); } })();
 async function teamResolve(ids) {
   ids = [...new Set(ids.filter(Boolean))].filter(id => !(id in TEAM.names)); if (!ids.length || !TEAM.user) return;
   try { const ps = await TEAM.user.profiles(ids); for (const id of ids) TEAM.names[id] = (ps[id] && ps[id].name) || ""; } catch (e) { console.warn(e); }

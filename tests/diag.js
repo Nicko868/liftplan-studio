@@ -8,7 +8,7 @@ const results = [];
 const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${info ? '  – ' + info : ''}`); };
 (async () => {
   const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });   // WebGL for the realistic 3D view
-  const fresh = async (vw = 1440, vh = 900) => { const p = await b.newPage({ viewport: { width: vw, height: vh } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' && !/ERR_TUNNEL|ERR_NAME|fonts|Failed to load resource/.test(m.text())) p._errs.push(m.text().slice(0, 200)); }); await p.goto('file://' + FILE); await p.waitForTimeout(900); return p; };
+  const fresh = async (vw = 1440, vh = 900) => { const p = await b.newPage({ viewport: { width: vw, height: vh } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message)); p.on('console', m => { if (m.type() === 'error' && !/ERR_TUNNEL|ERR_NAME|fonts|Failed to load resource/.test(m.text())) p._errs.push(m.text().slice(0, 200)); }); await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900); return p; };
   // create a plan through the home-page form (title block is required)
   const newPlan = async (p, name = 'Diagnostic plan') => { await p.fill('#stName', name); await p.fill('#stProj', 'Diag berth'); await p.fill('#stLift', 'LP-DIAG-001'); await p.fill('#stBy', 'Diagnostic'); await p.click('#stNew'); await p.waitForTimeout(300); };
   const shot = (p, n) => p.screenshot({ path: path.join(OUT, n + '.png') });
@@ -275,14 +275,14 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
     // ---------- 7. data moves between copies: backup in one, restore in a clean one (plans, site templates, drawings) ----------
     if (fs.existsSync(PDF2)) {
       let ctx = await b.newContext({ acceptDownloads: true }); p = await ctx.newPage(); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
-      await p.goto('file://' + FILE); await p.waitForTimeout(900); await newPlan(p, 'Round trip');
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900); await newPlan(p, 'Round trip');
       await p.evaluate(() => openSiteImport()); await p.setInputFiles('#siFile', PDF2); await p.waitForSelector('#siGo', { timeout: 15000 }); await p.click('#siGo'); await p.waitForTimeout(2500);
       await p.evaluate(async () => { await savePlan(); await saveSiteTemplate('SSB Base'); }); await p.waitForTimeout(800);
       await p.evaluate(() => $('bPlans').click()); await p.waitForTimeout(300);
       const [dl] = await Promise.all([p.waitForEvent('download'), p.click('#bBackup')]); const bk = path.join(OUT, 'roundtrip_backup.json'); await dl.saveAs(bk);
       const e1 = p._errs.slice(); await ctx.close();
       ctx = await b.newContext(); p = await ctx.newPage(); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
-      await p.goto('file://' + FILE); await p.waitForTimeout(900); await p.click('#stRestore'); await p.setInputFiles('#restoreFile', bk); await p.waitForTimeout(2000);
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900); await p.click('#stRestore'); await p.setInputFiles('#restoreFile', bk); await p.waitForTimeout(2000);
       r = await p.evaluate(async () => { const pl = planIndex.find(x => x.name === 'Round trip'); if (!pl) return null; openPlan(clone(pl)); await new Promise(r => setTimeout(r, 800)); return [!!CADS[plan.site.cad.id], plan.obstacles.length, siteTemplates.map(t => t.name).join(','), !!(await stCadJson(siteTemplates[0]))]; });
       check('Backup → restore in a clean copy keeps the plan, its drawing and the site template', r && r[0] && r[1] > 20 && r[2] === 'SSB Base' && r[3], JSON.stringify(r));
       check('No script errors moving data', !e1.length && !p._errs.length, [...e1, ...p._errs].slice(0, 3).join(' | '));
@@ -291,7 +291,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
     // ---------- 8. tandem lifts step by step: a top-and-tail upend and a two-crane move (cranes slewing and luffing) ----------
     {
       p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
-      await p.goto('file://' + FILE); await p.waitForTimeout(900); await newPlan(p, 'Tandem steps');
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900); await newPlan(p, 'Tandem steps');
       r = await p.evaluate(async () => {
         const ld = { ...clone(LOAD_PRESETS.box), id: uid(), name: 'Spud leg', kind: 'cyl', orient: 'horizontal', L: 27.5, D: 1.2, weight: 30, span: 26.9, pick: { x: 0, y: 0, rot: 0, h: 0 }, set: { x: 0, y: 0, rot: 0, h: 0 } };
         plan.loads.push(ld); normLoad(ld); addCraneOf('XCA230'); addCraneOf('XCA230'); const [c1, c2] = plan.cranes;
@@ -319,6 +319,66 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       check('Changing a step re-checks it', r.warned, JSON.stringify(r));
       check('No script errors in the lift steps', !p._errs.length, p._errs.slice(0, 3).join(' | '));
       await p.close();
+    }
+    // ---------- 9. shared database (Supabase, answered by a stand-in here): sign-in, first-time password, save, reload ----------
+    {
+      const store = new Map(), UID = '11111111-1111-4111-8111-111111111111'; let pwSet = false, tokens = 0, pwPuts = 0;
+      const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const user = () => ({ id: UID, aud: 'authenticated', role: 'authenticated', email: 'diag@example.com', user_metadata: pwSet ? { pw_set: true } : {}, app_metadata: { provider: 'email' }, created_at: '2026-01-01T00:00:00Z' });
+      const session = () => { const exp = Math.floor(Date.now() / 1000) + 3600; return { access_token: b64({ alg: 'HS256', typ: 'JWT' }) + '.' + b64({ sub: UID, exp, role: 'authenticated', aud: 'authenticated', email: 'diag@example.com' }) + '.sig', token_type: 'bearer', expires_in: 3600, expires_at: exp, refresh_token: 'diag-refresh', user: user() }; };
+      const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
+      const ctx = await b.newContext({ viewport: { width: 1440, height: 900 } });
+      await ctx.route('https://zsdacfyuongmebpdltcw.supabase.co/**', async route => {
+        const req = route.request(), u = new URL(req.url()), m = req.method(), hd = req.headers();
+        const json = (o, st = 200) => route.fulfill({ status: st, contentType: 'application/json', headers: H, body: JSON.stringify(o) });
+        if (m === 'OPTIONS') return route.fulfill({ status: 200, headers: H });
+        if (u.pathname === '/auth/v1/token') { const q = req.postDataJSON() || {}; if (q.password !== undefined && q.password !== 'TempPass1!') return json({ code: 400, error_code: 'invalid_credentials', msg: 'Invalid login credentials' }, 400); tokens++; return json(session()); }
+        if (u.pathname === '/auth/v1/user') { if (m === 'PUT') { const q = req.postDataJSON() || {}; if (q.data && q.data.pw_set && q.password) { pwSet = true; pwPuts++; } } return json(user()); }
+        if (u.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, headers: H });
+        if (u.pathname === '/rest/v1/liftplan_docs') {
+          const eq = k => { const v = u.searchParams.get(k); return v && v.startsWith('eq.') ? v.slice(3) : null; };
+          const one = /vnd\.pgrst\.object/.test(hd['accept'] || '');
+          if (m === 'GET') {
+            const coll = eq('coll'), pth = eq('path'); let rows = [...store.values()].filter(r => (coll == null || r.coll === coll) && (pth == null || r.path === pth)).sort((a, c) => a.path < c.path ? -1 : 1);
+            const off = +(u.searchParams.get('offset') || 0), lim = u.searchParams.get('limit'); rows = rows.slice(off, lim ? off + +lim : undefined);
+            return one ? (rows.length ? json(rows[0]) : json({ code: 'PGRST116', message: 'no rows' }, 406)) : json(rows);
+          }
+          if (m === 'POST') { let q = req.postDataJSON(); const arr = Array.isArray(q) ? q : [q]; arr.forEach(r => store.set(r.path, { ...r })); return json(one ? arr[0] : arr, 201); }
+          if (m === 'DELETE') { store.delete(eq('path')); return route.fulfill({ status: 204, headers: H }); }
+        }
+        return json({ message: 'not in the stand-in' }, 404);
+      });
+      p = await ctx.newPage(); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE); await p.waitForTimeout(1500); await shot(p, '90_sign_in');
+      g = await p.evaluate(() => { const d = $('dSignIn'), r = d.getBoundingClientRect(), top = document.elementFromPoint(r.x + r.width / 2, r.y + 30); return [d.open, !!top && d.contains(top), !$('siLogin').hidden, !!$('dStart').open]; });
+      check('Shared database: the app asks staff to sign in first, on top of the start screen', g[0] && g[1] && g[2], JSON.stringify(g));
+      await p.fill('#siEmail', 'diag@example.com'); await p.fill('#siPass', 'wrong'); await p.click('#siGo'); await p.waitForTimeout(600);
+      const wrong = await p.evaluate(() => [$('dSignIn').open, $('siMsg').textContent]);
+      await p.fill('#siPass', 'TempPass1!'); await p.click('#siGo'); await p.waitForTimeout(800); await shot(p, '91_first_password');
+      g = await p.evaluate(() => [$('dSignIn').open, !$('siNew').hidden, $('siLogin').hidden, $('siTitle').textContent]);
+      await p.keyboard.press('Escape'); await p.waitForTimeout(200); g.push(await p.evaluate(() => $('dSignIn').open));
+      check('Wrong password is refused; first sign-in must choose an own password (no way round it)', wrong[0] && /Wrong email or password/.test(wrong[1]) && g[0] && g[1] && g[2] && /choose your own password/.test(g[3]) && g[4], JSON.stringify([wrong, g]));
+      await p.fill('#siNew1', 'MyOwnPass9'); await p.fill('#siNew2', 'MyOwnPassX'); await p.click('#siGo'); await p.waitForTimeout(300);
+      const mism = await p.evaluate(() => $('siMsg').textContent);
+      await p.fill('#siNew2', 'MyOwnPass9'); await p.click('#siGo'); await p.waitForTimeout(1200);
+      g = await p.evaluate(() => [$('dSignIn').open, CAP.shared, TEAM.me, ($('bAccount') || {}).textContent]);
+      check('New password saved, then the app opens in shared mode with the user\'s name in the top bar', /aren't the same/.test(mism) && pwSet && pwPuts === 1 && !g[0] && g[1] && g[2] === UID && /diag/.test(g[3] || '') && store.has('people/' + UID), JSON.stringify([mism, pwSet, g]));
+      await newPlan(p, 'Shared plan'); await p.waitForTimeout(300);
+      const pid = await p.evaluate(async () => { await writePlan(false); return plan.id; }); await p.waitForTimeout(400);
+      const row = store.get('plans/' + pid);
+      check('Saving a plan writes it to the shared database with who saved it', row && row.coll === 'plans' && row.data.name === 'Shared plan' && row.data.savedBy === UID && row.updated_by === UID, JSON.stringify(row ? { coll: row.coll, name: row.data.name, savedBy: row.data.savedBy } : null));
+      // a colleague saves a newer version: the app reads it fresh (that's what the overwrite warning relies on)
+      store.set('plans/' + pid, { ...row, data: { ...row.data, rev: 99, savedBy: 'someone-else' } });
+      const fresh = await p.evaluate(async id => (await CAP.db.doc('plans/' + id).get()).data().rev, pid);
+      const errs1 = p._errs.filter(e => !/WebSocket|realtime/i.test(e));
+      const q = await ctx.newPage(); q._errs = []; q.on('pageerror', e => q._errs.push(e.message));
+      await q.goto('file://' + FILE); await q.waitForTimeout(2000);
+      g = await q.evaluate(id => [$('dSignIn').open, planIndex.some(x => x.id === id && x.name === 'Shared plan'), ($('bAccount') || {}).textContent, $('plansNote') ? (renderPlans(), $('plansNote').textContent) : ''], pid);
+      g.push(await q.evaluate(() => !!$('bAccount2') && $('dStart').contains($('bAccount2')))); await q.click('#bAccount2'); await q.waitForTimeout(300); await shot(q, '92_account');
+      check('Next visit: still signed in, no password prompt, the shared plan is listed', fresh === 99 && !g[0] && g[1] && /diag/.test(g[2] || '') && /shared database/.test(g[3]) && g[4] && tokens === 1, JSON.stringify([fresh, g, tokens]));
+      const errs = errs1.concat(q._errs.filter(e => !/WebSocket|realtime/i.test(e)));
+      check('No script errors in shared mode', !errs.length, errs.slice(0, 3).join(' | '));
+      await ctx.close();
     }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();

@@ -6,6 +6,7 @@ The app is built from the files in `app/` into one HTML file.
 - Diagnostic: `npm i playwright` (with Chromium), then `node tests/diag.js out/LiftPlan_Studio.html diag_out`
   – runs the main screens and the key checks (realistic 3D view, simple rigging builder, rigging hitches, bag counts, mats, capacity reset, tandem,
     layout tools, site templates, export), saves screenshots and `report.json`, prints PASS / FAIL.
+- Live app: https://nicko868.github.io/liftplan-studio/ (staff sign in; plans shared through Supabase – see `app/cloud.js`). Add `?local` to the address for browser-only mode.
 - Published copy: https://claude.ai/artifact/NScHgQ1XcfXyyuZpUXrpyi
 - Working copy: Apps\LiftPlan_Studio.html (OneDrive – Senegal Supply Base SA)
 
