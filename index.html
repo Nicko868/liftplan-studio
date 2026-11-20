@@ -1110,6 +1110,7 @@ const LOCAL = (() => {
 // as in browser mode (CAP.local). Everything sits in one table, liftplan_docs (path = "<collection>/<id>", jsonb data);
 // only signed-in staff can read or write it (row level security). "?local" in the address = this browser only.
 // The publishable key below is meant to be public – the protection is the sign-in plus the table rules.
+const LP_VERSION = "2026-11-20 09:42 UTC";   // stamped by build.sh: build date + time (UTC)
 const SB_CONFIG = { url: "https://zsdacfyuongmebpdltcw.supabase.co", key: "sb_publishable_ChUe-Mj-_ikynWd5ce57HA_humJSbm4", table: "liftplan_docs" };
 const CLOUD = (() => {
   if (typeof LOCAL === "undefined" || !LOCAL || !window.supabase || /[?&]local\b/.test(location.search)) return null;
@@ -1213,15 +1214,17 @@ const CLOUD = (() => {
   <p class="small" id="siTitle"></p>
   <div id="siLogin"><label>Email<input type="email" id="siEmail" autocomplete="username"></label>
     <label style="margin-top:8px">Password<input type="password" id="siPass" autocomplete="current-password"></label></div>
+  <div id="siNameRow" hidden><label>Your name (shown on the plans you save)<input type="text" id="siName" autocomplete="name" placeholder="e.g. Nicholas Thomas"></label></div>
   <div id="siNew" hidden><label>New password<input type="password" id="siNew1" autocomplete="new-password"></label>
     <label style="margin-top:8px">Type it again<input type="password" id="siNew2" autocomplete="new-password"></label>
     <p class="small">At least 8 characters. Only you will know it.</p></div>
   <button class="pri" id="siGo"></button>
   <button class="silink" id="siForgot">Forgot your password?</button>
   <p class="status" id="siMsg" hidden></p>
+  <p class="small" style="opacity:.6;margin:0">Version ${LP_VERSION}</p>
 </div></dialog>
 <dialog id="dAccount"><div class="dh"><b>Account</b><button data-close>Close</button></div><div class="db">
-  <p id="acWho"></p><p class="small" id="acState"></p>
+  <p id="acWho"></p><p class="small" style="margin:0">Version ${LP_VERSION}</p><p class="small" id="acState"></p>
   <p class="small">Plans, libraries and site templates are saved in the team's shared database. Everyone who is signed in sees the same data, and a colleague's save shows up without refreshing.</p>
   <div class="btnrow"><button id="acPass">Change my password</button><button id="acOut">Sign out</button></div>
 </div></dialog>`);
@@ -1235,13 +1238,15 @@ const CLOUD = (() => {
   const msg = (t, cls = "bad") => { const m = $c("siMsg"); m.hidden = !t; m.className = "status " + cls; m.textContent = t || ""; };
   function show(m) {
     mode = m; gate = true; msg("");
-    $c("siLogin").hidden = m !== "login"; $c("siNew").hidden = m === "login"; $c("siForgot").hidden = m !== "login";
+    $c("siLogin").hidden = m !== "login"; $c("siNew").hidden = m === "login" || m === "name"; $c("siForgot").hidden = m !== "login";
+    $c("siNameRow").hidden = !(m === "first" || m === "name"); if (!$c("siName").value) $c("siName").value = C.user?.user_metadata?.name || "";
     $c("siTitle").textContent = m === "login" ? "Sign in with the email and password you were given."
-      : m === "first" ? "Welcome" + (C.user?.email ? ", " + C.user.email : "") + ". Before you start, choose your own password to replace the temporary one."
+      : m === "first" ? "Welcome" + (C.user?.email ? ", " + C.user.email : "") + ". Before you start, type your name and choose your own password to replace the temporary one."
+      : m === "name" ? "One more thing: type your name. It's shown on the plans you create and save."
       : "Choose a new password.";
-    $c("siGo").textContent = m === "login" ? "Sign in" : "Save my password";
+    $c("siGo").textContent = m === "login" ? "Sign in" : m === "name" ? "Save" : "Save my password";
     if (dlg.open) dlg.close(); dlg.showModal();   // re-open so it sits on top of any other open window
-    setTimeout(() => (m === "login" ? ($c("siEmail").value ? $c("siPass") : $c("siEmail")) : $c("siNew1")).focus(), 30);
+    setTimeout(() => (m === "login" ? ($c("siEmail").value ? $c("siPass") : $c("siEmail")) : (m === "first" || m === "name") && !$c("siName").value ? $c("siName") : $c("siNew1")).focus(), 30);
   }
   async function go() {
     const b = $c("siGo"); if (b.disabled) return;
@@ -1253,13 +1258,21 @@ const CLOUD = (() => {
       if (error) { msg(/invalid/i.test(error.message) ? "Wrong email or password." : "Couldn't sign in: " + error.message); return; }
       $c("siPass").value = ""; signedIn(data.user);
     } else {
-      const p1 = $c("siNew1").value, p2 = $c("siNew2").value;
-      if (p1.length < 8) { msg("Use at least 8 characters."); return; }
-      if (p1 !== p2) { msg("The two passwords aren't the same."); return; }
+      const named = mode === "first" || mode === "name", name = $c("siName").value.trim().replace(/\s+/g, " ");
+      if (named && name.length < 2) { msg("Type your name."); return; }
+      const upd = { data: named ? { name } : {} };
+      if (mode !== "name") {
+        const p1 = $c("siNew1").value, p2 = $c("siNew2").value;
+        if (p1.length < 8) { msg("Use at least 8 characters."); return; }
+        if (p1 !== p2) { msg("The two passwords aren't the same."); return; }
+        upd.password = p1; upd.data.pw_set = true;
+      }
       b.disabled = true; msg("Saving…", "busy");
-      const { data, error } = await sb.auth.updateUser({ password: p1, data: { pw_set: true } }); b.disabled = false;
+      const { data, error } = await sb.auth.updateUser(upd); b.disabled = false;
       if (error) { msg(/different|same/i.test(error.message) ? "Choose a password different from the temporary one." : "Couldn't save it: " + error.message); return; }
-      $c("siNew1").value = $c("siNew2").value = ""; C.user = data.user; gate = false; dlg.close(); toastSafe("Password saved"); opened();
+      $c("siNew1").value = $c("siNew2").value = ""; C.user = data.user; gate = false; dlg.close();
+      toastSafe(mode === "name" ? "Name saved" : "Password saved"); opened();
+      if (named && started) db.doc("people/" + C.user.id).set({ name: C.myName(), email: C.user.email || "", seenAt: Date.now() }).catch(e => console.warn(e));
     }
   }
   $c("siGo").onclick = go;
@@ -1293,9 +1306,10 @@ const CLOUD = (() => {
 
   // ---------- session ----------
   let started = false;
+  const needs = u => !u.user_metadata?.pw_set ? "first" : !u.user_metadata?.name ? "name" : null;   // first sign-in: name + own password
   function signedIn(u) {
     C.user = u; gate = false; if (dlg.open) dlg.close();
-    if (!u.user_metadata?.pw_set) { show("first"); return; }
+    const need = needs(u); if (need) { show(need); return; }
     opened();
   }
   function opened() {
@@ -1315,7 +1329,7 @@ const CLOUD = (() => {
     if (data.session) signedIn(data.session.user);
   })();
   // the start screen opens while the scripts load; once everything is up, put the sign-in on top of it
-  window.addEventListener("load", async () => { await C.boot; paintHeader(); if (!C.user) show("login"); else if (dlg.open || !C.user.user_metadata?.pw_set) show(C.user.user_metadata?.pw_set ? mode : "first"); });
+  window.addEventListener("load", async () => { await C.boot; paintHeader(); if (!C.user) show("login"); else if (dlg.open || needs(C.user)) show(needs(C.user) || mode); });
   return C;
 })();
 if (CLOUD) LOCAL.db = CLOUD.db;   // the app reads LOCAL.db – from here on that's the shared database

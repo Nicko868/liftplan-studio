@@ -322,9 +322,9 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
     }
     // ---------- 9. shared database (Supabase, answered by a stand-in here): sign-in, first-time password, save, reload ----------
     {
-      const store = new Map(), UID = '11111111-1111-4111-8111-111111111111'; let pwSet = false, tokens = 0, pwPuts = 0;
+      const store = new Map(), UID = '11111111-1111-4111-8111-111111111111'; let pwSet = false, tokens = 0, pwPuts = 0, uname = '';
       const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
-      const user = () => ({ id: UID, aud: 'authenticated', role: 'authenticated', email: 'diag@example.com', user_metadata: pwSet ? { pw_set: true } : {}, app_metadata: { provider: 'email' }, created_at: '2026-01-01T00:00:00Z' });
+      const user = () => ({ id: UID, aud: 'authenticated', role: 'authenticated', email: 'diag@example.com', user_metadata: pwSet ? { pw_set: true, name: uname } : {}, app_metadata: { provider: 'email' }, created_at: '2026-01-01T00:00:00Z' });
       const session = () => { const exp = Math.floor(Date.now() / 1000) + 3600; return { access_token: b64({ alg: 'HS256', typ: 'JWT' }) + '.' + b64({ sub: UID, exp, role: 'authenticated', aud: 'authenticated', email: 'diag@example.com' }) + '.sig', token_type: 'bearer', expires_in: 3600, expires_at: exp, refresh_token: 'diag-refresh', user: user() }; };
       const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
       const ctx = await b.newContext({ viewport: { width: 1440, height: 900 } });
@@ -333,7 +333,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
         const json = (o, st = 200) => route.fulfill({ status: st, contentType: 'application/json', headers: H, body: JSON.stringify(o) });
         if (m === 'OPTIONS') return route.fulfill({ status: 200, headers: H });
         if (u.pathname === '/auth/v1/token') { const q = req.postDataJSON() || {}; if (q.password !== undefined && q.password !== 'TempPass1!') return json({ code: 400, error_code: 'invalid_credentials', msg: 'Invalid login credentials' }, 400); tokens++; return json(session()); }
-        if (u.pathname === '/auth/v1/user') { if (m === 'PUT') { const q = req.postDataJSON() || {}; if (q.data && q.data.pw_set && q.password) { pwSet = true; pwPuts++; } } return json(user()); }
+        if (u.pathname === '/auth/v1/user') { if (m === 'PUT') { const q = req.postDataJSON() || {}; if (q.data && q.data.pw_set && q.password) { pwSet = true; pwPuts++; } if (q.data && q.data.name) uname = q.data.name; } return json(user()); }
         if (u.pathname === '/auth/v1/logout') return route.fulfill({ status: 204, headers: H });
         if (u.pathname === '/rest/v1/liftplan_docs') {
           const eq = k => { const v = u.searchParams.get(k); return v && v.startsWith('eq.') ? v.slice(3) : null; };
@@ -358,11 +358,12 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       g = await p.evaluate(() => [$('dSignIn').open, !$('siNew').hidden, $('siLogin').hidden, $('siTitle').textContent]);
       await p.keyboard.press('Escape'); await p.waitForTimeout(200); g.push(await p.evaluate(() => $('dSignIn').open));
       check('Wrong password is refused; first sign-in must choose an own password (no way round it)', wrong[0] && /Wrong email or password/.test(wrong[1]) && g[0] && g[1] && g[2] && /choose your own password/.test(g[3]) && g[4], JSON.stringify([wrong, g]));
+      await p.fill('#siName', ''); await p.fill('#siNew1', 'MyOwnPass9'); await p.fill('#siNew2', 'MyOwnPass9'); await p.click('#siGo'); await p.waitForTimeout(300); const noName = await p.evaluate(() => [$('dSignIn').open, $('siMsg').textContent]); await p.fill('#siName', 'Diag Tester');
       await p.fill('#siNew1', 'MyOwnPass9'); await p.fill('#siNew2', 'MyOwnPassX'); await p.click('#siGo'); await p.waitForTimeout(300);
       const mism = await p.evaluate(() => $('siMsg').textContent);
       await p.fill('#siNew2', 'MyOwnPass9'); await p.click('#siGo'); await p.waitForTimeout(1200);
       g = await p.evaluate(() => [$('dSignIn').open, CAP.shared, TEAM.me, ($('bAccount') || {}).textContent]);
-      check('New password saved, then the app opens in shared mode with the user\'s name in the top bar', /aren't the same/.test(mism) && pwSet && pwPuts === 1 && !g[0] && g[1] && g[2] === UID && /diag/.test(g[3] || '') && store.has('people/' + UID), JSON.stringify([mism, pwSet, g]));
+      check('Name and new password saved, then the app opens in shared mode with the user\'s name in the top bar', noName[0] && /Type your name/.test(noName[1]) && /aren't the same/.test(mism) && pwSet && pwPuts === 1 && !g[0] && g[1] && g[2] === UID && /Diag Tester/.test(g[3] || '') && (store.get('people/' + UID) || { data: {} }).data.name === 'Diag Tester' && /Version 20\d\d-/.test(await p.evaluate(() => $('dSignIn').textContent)), JSON.stringify([noName, mism, pwSet, g]));
       await newPlan(p, 'Shared plan'); await p.waitForTimeout(300);
       const pid = await p.evaluate(async () => { await writePlan(false); return plan.id; }); await p.waitForTimeout(400);
       const row = store.get('plans/' + pid);
@@ -375,7 +376,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       await q.goto('file://' + FILE); await q.waitForTimeout(2000);
       g = await q.evaluate(id => [$('dSignIn').open, planIndex.some(x => x.id === id && x.name === 'Shared plan'), ($('bAccount') || {}).textContent, $('plansNote') ? (renderPlans(), $('plansNote').textContent) : ''], pid);
       g.push(await q.evaluate(() => !!$('bAccount2') && $('dStart').contains($('bAccount2')))); await q.click('#bAccount2'); await q.waitForTimeout(300); await shot(q, '92_account');
-      check('Next visit: still signed in, no password prompt, the shared plan is listed', fresh === 99 && !g[0] && g[1] && /diag/.test(g[2] || '') && /shared database/.test(g[3]) && g[4] && tokens === 1, JSON.stringify([fresh, g, tokens]));
+      check('Next visit: still signed in, no password prompt, the shared plan is listed', fresh === 99 && !g[0] && g[1] && /Diag Tester/.test(g[2] || '') && /shared database/.test(g[3]) && g[4] && tokens === 1, JSON.stringify([fresh, g, tokens]));
       const errs = errs1.concat(q._errs.filter(e => !/WebSocket|realtime/i.test(e)));
       check('No script errors in shared mode', !errs.length, errs.slice(0, 3).join(' | '));
       await ctx.close();

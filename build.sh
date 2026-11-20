@@ -16,5 +16,7 @@ body=sh.replace('<title>LiftPlan Studio</title>','',1)
 for f in ["local.js","cloud.js","draw.js","build.js","rigging.js","loads.js","loadlib.js","calc.js","data.js","mats.js","../app_charts.js","cc2800_charts.js","app.js","ui.js","riglib.js","riggingui.js","view3d.js","app2.js","lifts.js","textstyle.js","tandemfix.js","vessel.js","siteobj.js","siteimport.js","start.js","panels.js","riglist.js","rigbuild.js","chain.js","rigtree.js","rigwb.js","fittings.js","masterdata.js","team.js","theme.js","layouttools.js","sitetemplates.js","sitebuild.js","dwgobj.js","siteshapes.js","pictrace.js","sitearea.js","siteai.js","importhub.js","claudelink.js","datasync.js","rules.js","groundcheck.js","placement.js","rigquick.js","autoplan.js","matfx.js","transport.js","superlift.js","siteplus.js","present.js","names.js","groundwind.js","liftcheck.js","vehclear.js","travelluff.js","cranespec.js","liftsteps.js","sheetset.js","rigcalc.js","modulift.js","checks.js","gbcalc.js","calcs.js","cadsheet.js","planstyle.js","clipboard.js","sheetpreview.js","tidy.js","gl3d.js","liftplay.js"]:
     body+='<script>\n'+open(f).read()+'\n</script>\n'
 out='<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LiftPlan Studio</title></head><body>\n'+body+'</body></html>\n'
+import datetime
+out=out.replace('__LP_BUILD__', datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC'))
 open(OUT,'w').write(out); print(OUT, len(out))
 PY

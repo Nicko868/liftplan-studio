@@ -18,11 +18,13 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   - Shared mode (default outside claude.ai): `app/cloud.js` – Supabase project `liftplan-studio`
     (https://zsdacfyuongmebpdltcw.supabase.co), one table `liftplan_docs` (path = "<collection>/<id>", coll, jsonb data,
     updated_at, updated_by), row level security = signed-in staff only, realtime on. Sign-in screen; first sign-in
-    forces the user to choose their own password (user_metadata.pw_set); "Forgot your password?" sends a reset link.
+    asks for the user's name and forces them to choose their own password (user_metadata.name / pw_set); "Forgot your password?" sends a reset link.
     Names for "saved by" come from `people/<user id>` docs. Pictures stay inside the documents (CAP.local is true).
   - Browser-only mode: `app/local.js` (IndexedDB), used with `?local` in the address. Inside claude.ai the artifact
     runtime db is used.
   - Users are added by Nicko in Supabase → Authentication → Users → Add user (Auto Confirm, temporary password).
+    "Allow new users to sign up" must stay OFF in Supabase (the publishable key is public).
+  - Version shown on the sign-in screen and in Account: build.sh stamps the build date/time into LP_VERSION.
 - Never put job data, client data or a secret key in `index.html` (the repo is public). The only key allowed in it is the
   Supabase **publishable** key (it is public by design; the protection is the sign-in + table rules). Never the
   secret / service_role key. The Anthropic key is typed in by each user.
