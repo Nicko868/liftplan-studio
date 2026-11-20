@@ -12,7 +12,7 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   later file must run on `window` "load", never `setTimeout`.
 - Run `node --check` on every changed `.js` file before building.
 - Diagnostics: `NODE_PATH=<global node_modules> node tests/diag.js` (Playwright + Chromium) – must stay all PASS
-  (75/75 since sample plans in the plans list). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
+  (80/80 since forklift tailing). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
   the file with `?local` (browser-only mode); scenario 9 tests shared mode against a stand-in for Supabase.
 - Storage: all saving goes through `CAP.db` (collection / doc / onSnapshot).
   - Shared mode (default outside claude.ai): `app/cloud.js` – Supabase project `liftplan-studio`
@@ -31,9 +31,9 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   Supabase **publishable** key (it is public by design; the protection is the sign-in + table rules). Never the
   secret / service_role key. The Anthropic key is typed in by each user.
 
-- Sample plans: `app/samples.js` (SAMPLE_PLANS) – start screen → "Sample plans". Two top-and-tail upends (spud leg,
-  steel column) and one moving tandem lift (85 t transformer). Made-up data, built-in cranes only, no "SSB" anywhere.
-  Every new lift type gets a sample here (Nicko wants to see the expected output); diagnostic scenarios 10–11 check them.
+- Sample plans: `app/samples.js` (SAMPLE_PLANS) – start screen → "Sample plans". Three top-and-tail upends (spud leg and
+  steel column with two cranes; 10 t column with a crane + Hyster H16XD6 forklift) and one moving tandem lift (85 t transformer). Made-up data, built-in cranes only, no "SSB" anywhere.
+  Every new lift type gets a sample here (Nicko wants to see the expected output); diagnostic scenarios 10–11 check them (12 = forklift).
   They are also put in the Lift plans list once per database (ids sample-1…, record meta/samples; a deleted one stays deleted).
 
 ## Standing rules from Nicko
@@ -52,4 +52,11 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
 - Sheets: summary (plan + table) then ONE stage per page: CAD front elevation (default, `plan.meta.seqStyle = "cad"`) or
   realistic 3D (`"real"`), callouts placed clear of cranes/load with leaders, hook-height dims, load angle arc, clearance dim,
   key plan, and per-crane move instructions + checks.
+- Top and tail with a forklift (`app/forklift.js` + `lsFTSteps` in liftsteps.js): one crane on the top lifting point (attach "A"),
+  a forklift site object (type "forklift", `o.fl = {model, load, how: forks|hook, c, attW}`) on the tail. Crane hook stays over
+  the top lug and hoists; the forklift drives in at fork height; released at vertical (step release "F"), backs away 2.5 m.
+  Forklift checked for max(share by moments, Rules `tt.fork` 75 % of the load) + attachment, capacity at the load centre
+  (~, mast table rating carried by load moment about the front axle), fork height ≤ mast lift, axle loads (rear must stay > 0),
+  limit Rules `fork.util`. Models are data in FORKLIFTS (H16XD6 from Hyster's spec sheet; axle model reproduces its rated axle loads).
+  "Tail with a forklift…" on the checks panel for a one-crane load ≥ 6 m long. No default bridle is made up for it (rigShown).
 - Known gaps: LTM 1230 / LTM 1130 charts not in the crane library yet; vessels have no hold model; a callout can still cross a sling line.

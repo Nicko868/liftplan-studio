@@ -11,7 +11,12 @@ const LS_CACHE = new Map();
 const lsCranes = ld => plan.cranes.filter(c => c.attach?.load === ld.id && REG.cranes[c.model]);
 const lsChart = cr => { const ch = REG.charts[cr.chartId]; return ch && ch.craneId === cr.model ? ch : null; };
 const lsBuild2 = ld => ld.rig?.arr === "build" && +ld.rig.cranes === 2;
-function lsUpend(ld) { return lsBuild2(ld) && (ld.upend != null ? !!ld.upend : ld.rig.preset === "build_upend"); }
+const lsFork = ld => (plan.obstacles || []).find(o => o.type === "forklift" && o.fl && o.fl.load === ld.id && typeof FORKLIFTS !== "undefined" && FORKLIFTS[o.fl.model]) || null;
+const lsFT = ld => lsCranes(ld).length === 1 && !!lsFork(ld);   // top and tail: one crane on the top, a forklift on the tail
+// a crane topping with a forklift on the tail hangs the top from its own rigging: no default two-leg sling set is made up for it
+{ const _rs = rigShown; rigShown = function (ld, cranes) { if (lsFT(ld) && !ld.rig?.arr) return false; return _rs.call(this, ld, cranes); }; }
+const lsTwo = ld => lsCranes(ld).length >= 2 || lsFT(ld);       // a lift that gets the step-by-step treatment
+function lsUpend(ld) { return lsFT(ld) || (lsBuild2(ld) && (ld.upend != null ? !!ld.upend : ld.rig.preset === "build_upend")); }
 // the height to carry the load at: 1 m over the tallest thing on the way, never above what the hooks reach
 function lsCarry(ld, tp, cranes) {
   const rigH = loadRigHeight(ld, cranes.length > 1), hit = tp ? obstacleHits(ld, tp) : null; let top = 0; if (hit && hit.over) for (const v of hit.over.values()) top = Math.max(top, v.top);
@@ -23,10 +28,10 @@ function lsCarry(ld, tp, cranes) {
 // the steps: yours, or worked out from the lift
 function lsAutoSteps(ld) {
   const up = lsUpend(ld), to = Math.max(15, Math.min(90, +(ld.upend?.to ?? 90) || 90)), moved = Math.hypot(ld.set.x - ld.pick.x, ld.set.y - ld.pick.y) > 0.5 || Math.abs((+ld.set.rot || 0) - (+ld.pick.rot || 0)) > 1;
-  if (up) { const tail = "B", S = [{ name: "Take the weight – both cranes", t: 0, h: "pick", tilt: 0 }, { name: "Lift clear, load level", t: 0, h: "lift", tilt: 0 }];
-    for (let a = 15; a < to; a += 15) S.push({ name: `Upend to ${a}° – top crane hoists, tail crane lowers`, t: 0, h: "lift", tilt: a });
-    S.push({ name: to >= 90 ? "Vertical – tail crane lowers off and is unhooked" : `At ${to}° – tail crane lowers off`, t: 0, h: "lift", tilt: to, release: tail });
-    if (moved) S.push({ name: "Top crane takes it to the set position", t: 1, h: "carry", tilt: to, release: tail }, { name: "Set down", t: 1, h: "set", tilt: to, release: tail });
+  if (up) { const fk = lsFT(ld), tail = fk ? "F" : "B", S = [{ name: fk ? "Take the weight – crane and forklift" : "Take the weight – both cranes", t: 0, h: "pick", tilt: 0 }, { name: "Lift clear, load level", t: 0, h: "lift", tilt: 0 }];
+    for (let a = 15; a < to; a += 15) S.push({ name: fk ? `Upend to ${a}° – crane hoists, forklift drives in` : `Upend to ${a}° – top crane hoists, tail crane lowers`, t: 0, h: "lift", tilt: a });
+    S.push({ name: fk ? (to >= 90 ? "Vertical – forklift lowers its forks clear and backs away" : `At ${to}° – forklift lowers off`) : to >= 90 ? "Vertical – tail crane lowers off and is unhooked" : `At ${to}° – tail crane lowers off`, t: 0, h: "lift", tilt: to, release: tail });
+    if (moved) S.push({ name: fk ? "Crane takes it to the set position" : "Top crane takes it to the set position", t: 1, h: "carry", tilt: to, release: tail }, { name: "Set down", t: 1, h: "set", tilt: to, release: tail });
     else S.push({ name: "Set down", t: 0, h: "pick", tilt: to, release: tail });
     return S; }
   const S = [{ name: "Take the weight", t: 0, h: "pick" }, { name: "Lift clear", t: 0, h: "carry" }];
@@ -38,6 +43,7 @@ const lsSteps = ld => (Array.isArray(ld.steps) && ld.steps.length ? ld.steps : l
 // everything at every step
 function liftSteps(ld) {
   if (!ld) return null; const cranes = lsCranes(ld); if (!cranes.length) return null;
+  if (lsFT(ld)) return lsFTSteps(ld, cranes, lsFork(ld));
   const key = `${ld.id}|${plan.updated}|${plan.al}|${JSON.stringify(ld.steps || "")}|${ld.upend ?? ""}|${JSON.stringify(cranes.map(c => [c.x, c.y, c.L, c.chartId, c.heading, c.hookBlock, c.attach?.point]))}|${JSON.stringify([ld.pick, ld.set, ld.rig?.tilt])}`;
   if (LS_CACHE.has(key)) return LS_CACHE.get(key); if (LS_CACHE.size > 60) LS_CACHE.clear();
   normLoad(ld); const tp = travelPath(ld), C0 = cranes.map(c => REG.cranes[c.model]), build2 = lsBuild2(ld) && cranes.length === 2, up = lsUpend(ld);
@@ -83,12 +89,61 @@ function liftSteps(ld) {
     const clear = under ? h - under.top : null;
     return { no: no + 1, ...s, t, pose: P, h, tilt, per, under, clear, ok: per.every(q => q.ok) && !(clear != null && clear < TRAVEL_CLEAR - 0.01 && !atEnd) };
   });
-  const r = { ld, cranes, steps, carry, up, auto: !(Array.isArray(ld.steps) && ld.steps.length), lim };
+  const r = { ld, cranes, units: cranes, steps, carry, up, auto: !(Array.isArray(ld.steps) && ld.steps.length), lim };
+  LS_CACHE.set(key, r); return r;
+}
+// ---------- top and tail with a forklift ----------
+// The crane's hook stays over the top lifting point and hoists; the tail rests on the forks (or hangs from a fork hook)
+// at fork height, and the forklift drives in under the crane as the load turns up. At vertical the forks are lowered
+// clear and the forklift backs away; the crane carries on alone. Shares by moments about the two supports (vertical
+// rope, vertical fork reaction): the tail's part stays the same at every angle until it is let go.
+function lsFTSteps(ld, cranes, fo) {
+  const c = cranes[0], C = REG.cranes[c.model], F = FORKLIFTS[fo.fl.model], fl = fo.fl;
+  const key = `ft|${ld.id}|${plan.updated}|${plan.al}|${JSON.stringify(ld.steps || "")}|${ld.upend ?? ""}|${JSON.stringify([c.x, c.y, c.L, c.chartId, c.hookBlock, c.extra, fl, ld.pick, ld.set, ld.cog, ld.span, ld.weight, ld.rigWeight])}`;
+  if (LS_CACHE.has(key)) return LS_CACHE.get(key); if (LS_CACHE.size > 60) LS_CACHE.clear();
+  normLoad(ld); const d = loadDims(ld), W = +ld.weight || 0, rw = typeof rigW === "function" ? rigW(ld) : 0, total = W + rw, lim = +plan.site.ulim || (rule("crane.util") ?? 100), flim = rule("fork.util") ?? 100;
+  const sp = tandemSpan(ld) || d.x * 0.9, xA = -sp / 2, xB = sp / 2, zl = liftPointZ(ld), supZ = fl.how === "hook" ? zl : 0, rh = ld.rig?.arr ? loadRigHeight(ld, true) : (+ld.tandemRig || 0) + zl, cl = +fl.c || F.c0;
+  const cog = +ld.cog || 0, tailW = Math.max(0, Math.min(W, W * (cog - xA) / (xB - xA)));
+  const rot0 = +ld.pick.rot || 0, toW = (P, q) => { const v = rot2([q[0], q[1]], -(P.rot || 0)); return [P.x + v[0], P.y + v[1]]; };
+  const A0 = toW(ld.pick, [xA, 0]), A1 = toW(ld.set, [xA, 0]), hOf = s => s.h === "pick" ? (+ld.pick.h || 0) : s.h === "set" ? (+ld.set.h || 0) : s.h === "carry" ? Math.max(+ld.pick.h || 0, +ld.set.h || 0) + 1 : s.h === "lift" ? (+ld.pick.h || 0) + 1 : (+s.h || 0);
+  const fx0 = { id: fo.id, label: fo.label || "Forklift", color: "#b8860b", model: F.name, attach: { point: "F" } }; let lastF = null;
+  const steps = lsSteps(ld).map((s0, no) => {
+    const s = { ...s0 }, t = Math.max(0, Math.min(1, +s.t || 0)), tilt = +s.tilt || 0, rel = s.release === "F", TT = tiltFn(ld, { tilt }), rot = rot0 + ((+ld.set.rot || 0) - rot0) * t;
+    const a = TT([xA, 0, zl]), b = TT([xB, 0, supZ]), Ap = [A0[0] + (A1[0] - A0[0]) * t, A0[1] + (A1[1] - A0[1]) * t];
+    let hf = hOf(s), h0;
+    if (rel) h0 = s.h === "lift" ? Math.max(0.05, (lastF ? lastF.h0 : hf)) : hf; else { h0 = hf - b[2]; if (h0 < 0.05) { h0 = 0.05; hf = h0 + b[2]; } }
+    const va = rot2([a[0], a[1]], -rot), P = { x: Ap[0] - va[0], y: Ap[1] - va[1], rot }, Bp = toW(P, b);
+    const zA = h0 + a[2], z = zA + (rh - zl);
+    // the crane
+    const R = Math.hypot(Ap[0] - c.x, Ap[1] - c.y), brg = bearingDeg(Ap[0] - c.x, Ap[1] - c.y), ba = boomAngle(C, c.L, R), ch = lsChart(c), k2 = ch ? craneCapacity(C, c, ch, R) : { cap: null, why: "no load chart" };
+    const geom = rel ? total : total - tailW, design = rel ? 0 : (rule("tt.top") ?? 100) / 100 * total, used = Math.max(geom, design), hookLoad = used + (+c.hookBlock || 0) + (+c.extra || 0), util = k2.cap ? hookLoad / k2.cap * 100 : null;
+    const hMax = ba.ok ? hookMaxZ(c, { C, ba }) : null, tooHigh = hMax != null && z > hMax + 0.05;
+    const qc = { c, C, rel: false, R, brg, ba, cap: k2.cap, why: k2.why, rUsed: k2.rUsed, geom, design, dWhy: "top crane", used, hookLoad, util, hook: Ap, z, hMax, tooHigh, ok: !(k2.cap == null || util > lim || !ba.ok || tooHigh) };
+    // the forklift: forks under the tail, facing the crane
+    let qf;
+    if (!rel) {
+      const u0 = [Ap[0] - Bp[0], Ap[1] - Bp[1]], ul = Math.hypot(u0[0], u0[1]), u = ul > 0.05 ? [u0[0] / ul, u0[1] / ul] : (lastF ? lastF.u : rot2([-1, 0], -rot));
+      const face = [Bp[0] - u[0] * cl, Bp[1] - u[1] * cl], ctr = [face[0] - u[0] * F.l2 / 2, face[1] - u[1] * F.l2 / 2];
+      const fgeom = tailW, fdesign = (rule("tt.fork") ?? 75) / 100 * W, fused = Math.max(fgeom, fdesign), load = fused + (+fl.attW || 0), cap = flCap(F, cl, fl.mast), ax = flAxles(F, load, cl), futil = load / cap * 100;
+      qf = { c: fx0, fork: true, F, rel: false, ctr, u, rot: flHeading(u), face, B: Bp, hook: Bp, z: hf, forkH: hf, cl, geom: fgeom, design: fdesign, dWhy: "tailing forklift", used: fused, hookLoad: load, cap, util: futil, axles: ax, h3: +fl.mast || F.h3,
+        tooHigh: hf > (+fl.mast || F.h3) + 0.01, ok: futil <= flim && ax[1] > 0 && hf <= (+fl.mast || F.h3) + 0.01 };
+      lastF = { ctr, u, rot: qf.rot, hf, h0 };
+    } else { const L0 = lastF || { ctr: [fo.x, fo.y], u: rot2([1, 0], -(fo.rot || 0)), rot: fo.rot || 0, hf: 0.15 }, back = 2.5;
+      qf = { c: fx0, fork: true, F, rel: true, ctr: [L0.ctr[0] - L0.u[0] * back, L0.ctr[1] - L0.u[1] * back], u: L0.u, rot: L0.rot, z: 0.15, forkH: 0.15, cl, geom: 0, design: 0, used: 0, hookLoad: 0, cap: null, util: null, ok: true, hook: null }; }
+    // what is under the load (the forklift holding it doesn't count)
+    const out = loadOutline(ld).map(q => { const r = rot2([q[0] * Math.cos(tilt * D2R), q[1]], -rot); return [P.x + r[0], P.y + r[1]]; });
+    let under = null; for (const o of (typeof hitShapes === "function" ? hitShapes() : plan.obstacles)) { if (o === fo || o.id === fo.id || (o.type && !itemInLift(o)) || o.zone || o.kind === "dim" || !(+o.hgt > 0) || o.kind === "line") continue;
+      const Q = o.kind === "circle" ? Array.from({ length: 16 }, (_, k) => [o.x + (+o.r || 1) * Math.cos(k * Math.PI / 8), o.y + (+o.r || 1) * Math.sin(k * Math.PI / 8)]) : obsPts(o); if (!Q || Q.length < 3) continue;
+      if (!(Q.some(p => inPolyPt(p, out)) || out.some(p => inPolyPt(p, Q)))) continue; const top = +o.hgt; if ((t <= 0.001 || t >= 0.999) && top <= h0 + 0.05) continue; if (!under || top > under.top) under = { top, name: o.label || OBJ_TYPES[o.type]?.name || "site item" }; }
+    const clear = under ? h0 - under.top : null;
+    return { no: no + 1, ...s, t, pose: P, h: h0, forkH: hf, tilt, per: [qc, qf], under, clear, ok: qc.ok && qf.ok };
+  });
+  const r = { ld, cranes, units: [c, fx0], fork: fo, F, ft: true, steps, carry: { H: Math.max(+ld.pick.h || 0, +ld.set.h || 0) + 1, top: 0 }, up: true, auto: !(Array.isArray(ld.steps) && ld.steps.length), lim, flim };
   LS_CACHE.set(key, r); return r;
 }
 // every step that fails goes into the crane's checks
 { const _cs = craneSummary; craneSummary = function (cr, ...a) { const S = _cs.call(this, cr, ...a);
-    try { const ld = plan.loads.find(l => l.id === cr.attach?.load); if (!S || !ld || lsCranes(ld).length < 2) return S; const L = liftSteps(ld); if (!L) return S;
+    try { const ld = plan.loads.find(l => l.id === cr.attach?.load); if (!S || !ld || !lsTwo(ld)) return S; const L = liftSteps(ld); if (!L) return S;
       const name = cr.label || REG.cranes[cr.model]?.short || "Crane";
       let worst = null; for (const s of L.steps) { const q = s.per.find(p => p.c.id === cr.id); if (!q || q.rel) continue; if (q.util != null && (!worst || q.util > worst.q.util)) worst = { s, q };
         if (q.cap == null) S.warn.push(`${name}: lift step ${s.no} (${s.name}) – no chart capacity at R ${fx(q.R, 1)} m${q.why ? " – " + q.why : ""}`);
@@ -96,6 +151,11 @@ function liftSteps(ld) {
         if (q.tooHigh) S.warn.push(`${name}: lift step ${s.no} (${s.name}) – the hook would need to be ${fx(q.z, 1)} m up; this boom gives ${fx(q.hMax, 1)} m at R ${fx(q.R, 1)} m`);
         if (!q.ba.ok) S.warn.push(`${name}: lift step ${s.no} (${s.name}) – ${q.ba.why}`); }
       if (worst) S.steps = { worst, L };
+      if (L.ft && cr === L.cranes[0]) { const fn = `${L.fork.label || "Forklift"}`;
+        for (const s of L.steps) { const f = s.per.find(p => p.fork); if (!f || f.rel) continue;
+          if (f.util > L.flim) S.warn.push(`${fn}: lift step ${s.no} (${s.name}) – ${fx(f.hookLoad, 1)} t on the forks at ${fx(f.cl * 1000, 0)} mm load centre on ~${fx(f.cap, 1)} t = ${fx(f.util, 0)}%, over the ${L.flim}% limit${f.design > f.geom + 0.01 ? ` (checked as the tailing forklift for ${rule("tt.fork") ?? 75}% of the load)` : ""}`);
+          if (f.axles[1] <= 0) S.warn.push(`${fn}: lift step ${s.no} – the rear axle is unloaded (${fx(f.axles[1], 1)} t): the forklift would tip forward`);
+          if (f.tooHigh) S.warn.push(`${fn}: lift step ${s.no} – forks at ${fx(f.forkH, 2)} m, above the mast's ${fx(f.h3, 2)} m lift`); } }
       if (cr === L.cranes[0]) for (const s of L.steps) if (s.clear != null && s.clear < TRAVEL_CLEAR - 0.01 && ((s.t > 0.001 && s.t < 0.999) || (s.h > (+ld.pick.h || 0) + 0.05 && s.h > (+ld.set.h || 0) + 0.05)))
         S.warn.push(s.clear < 0 ? `${ld.name}: lift step ${s.no} (${s.name}) – the load at ${fx(s.h, 1)} m runs into ${s.under.name} (${fx(s.under.top, 1)} m high) – raise it to ${fx(s.under.top + TRAVEL_CLEAR, 1)} m` : `${ld.name}: lift step ${s.no} (${s.name}) – only ${fx(s.clear, 2)} m over ${s.under.name}; keep ${fx(TRAVEL_CLEAR, 1)} m`);
     } catch (e) { console.warn(e); }
@@ -104,20 +164,24 @@ function liftSteps(ld) {
 // ---------------- the steps on the checks panel ----------------
 function lsTableHTML(L, opt = {}) {
   const lim = L.lim, cls = u => u == null ? "" : u > 100 ? "bad" : u > lim ? "bad" : u > lim * 0.9 ? "amber" : "ok";
-  return `<table class="lst"><tr><th>Step</th>${L.cranes.map(c => `<th class="n" colspan="2">${escH(c.label || REG.cranes[c.model]?.short || "Crane")}</th>`).join("")}</tr>
+  return `<table class="lst"><tr><th>Step</th>${(L.units || L.cranes).map(c => `<th class="n" colspan="2">${escH(c.label || REG.cranes[c.model]?.short || "Crane")}</th>`).join("")}</tr>
     ${L.steps.map(s => `<tr class="${s.ok ? "" : "lsbad"}"><td>${s.no}. ${escH(s.name)}${s.tilt ? ` <span class="small">· ${fx(s.tilt, 0)}°</span>` : ""}${opt.full ? `<div class="small">load ${fx(s.h, 1)} m up${s.under ? ` · ${s.clear >= 0 ? fx(s.clear, 2) + " m over" : "runs into"} ${escH(s.under.name)}` : ""}</div>` : ""}</td>
-      ${s.per.map(q => q.rel ? `<td class="n small" colspan="2">off the hook</td>` : `<td class="n small">R ${fx(q.R, 1)} m<br>${fx(q.used, 1)} t${q.design > q.geom + 0.01 ? "*" : ""}</td><td class="n"><span class="pill ${cls(q.util)}">${q.util != null ? fx(q.util, 0) + "%" : "–"}</span></td>`).join("")}</tr>`).join("")}</table>
-    ${L.up ? `<p class="small" style="margin:2px 0 0">* checked for the design share: top crane ${rule("tt.top") ?? 100}%, tail crane ${rule("tt.tail") ?? 75}% of the load while both are on (Rules & limits).</p>` : ""}`;
+      ${s.per.map(q => q.rel ? `<td class="n small" colspan="2">${q.fork ? "clear" : "off the hook"}</td>` : q.fork ? `<td class="n small">forks ${fx(q.forkH, 2)} m<br>${fx(q.used, 1)} t${q.design > q.geom + 0.01 ? "*" : ""}</td><td class="n"><span class="pill ${cls(q.util)}">${fx(q.util, 0)}%</span></td>` : `<td class="n small">R ${fx(q.R, 1)} m<br>${fx(q.used, 1)} t${q.design > q.geom + 0.01 ? "*" : ""}</td><td class="n"><span class="pill ${cls(q.util)}">${q.util != null ? fx(q.util, 0) + "%" : "–"}</span></td>`).join("")}</tr>`).join("")}</table>
+    ${L.up ? `<p class="small" style="margin:2px 0 0">* checked for the design share: top crane ${rule("tt.top") ?? 100}%, ${L.ft ? `tailing forklift ${rule("tt.fork") ?? 75}%` : `tail crane ${rule("tt.tail") ?? 75}%`} of the load while both are on (Rules & limits).${L.ft ? ` Forklift capacity at the load centre is ~ (rated load carried by the load moment about the front axle – check the truck's plate).` : ""}</p>` : ""}`;
 }
 { const st = document.createElement("style"); st.textContent = `table.lst{width:100%;font-size:11.5px;border-collapse:collapse}table.lst td,table.lst th{padding:2px 4px;border-bottom:1px solid var(--line)}table.lst th{text-align:left;font-weight:600}table.lst .n{text-align:right}table.lst tr.lsbad td:first-child{color:var(--bad)}`; document.head.append(st); }
 { const _rc = renderChecks; renderChecks = function (...a) { const r = _rc.apply(this, a);
     try { const box = $("checks"); if (!box || allMode) return r;
-      for (const ld of plan.loads) { if (lsCranes(ld).length < 2 && !(Array.isArray(ld.steps) && ld.steps.length)) continue; const L = liftSteps(ld); if (!L) continue; const bad = L.steps.filter(s => !s.ok).length;
+      for (const ld of plan.loads) {
+        if (lsCranes(ld).length === 1 && !lsFork(ld) && loadDims(ld).x >= 6 && typeof FORKLIFTS !== "undefined") box.insertAdjacentHTML("beforeend", `<div class="card" style="margin-bottom:10px"><div class="ch"><b>Top and tail · ${escH(ld.name)}</b><button data-lsfork="${ld.id}">Tail with a forklift…</button></div><p class="small" style="padding:4px 10px 8px;margin:0">One crane on a long load: upend it with the crane on the top and a forklift holding the tail, checked step by step.</p></div>`);
+        if (!lsTwo(ld) && !(Array.isArray(ld.steps) && ld.steps.length)) continue; const L = liftSteps(ld); if (!L) continue; const bad = L.steps.filter(s => !s.ok).length;
         box.insertAdjacentHTML("beforeend", `<div class="card" style="margin-bottom:10px${bad ? ";border-color:var(--bad)" : ""}"><div class="ch"><b>Lift steps · ${escH(ld.name)}</b><button data-lsedit="${ld.id}">Steps…</button></div>
-          <p class="small" style="padding:4px 10px 0;margin:0">${L.up ? "Top and tail upend" : L.cranes.length > 1 ? "Tandem lift" : "Lift"} in ${L.steps.length} steps${L.auto ? " (worked out by the app – change them under Steps…)" : ""}${bad ? ` · <b style="color:var(--bad)">${bad} step${bad > 1 ? "s" : ""} not OK</b>` : " · every step OK"}</p>
+          <p class="small" style="padding:4px 10px 0;margin:0">${L.ft ? "Top and tail upend – crane and forklift" : L.up ? "Top and tail upend" : L.cranes.length > 1 ? "Tandem lift" : "Lift"} in ${L.steps.length} steps${L.auto ? " (worked out by the app – change them under Steps…)" : ""}${bad ? ` · <b style="color:var(--bad)">${bad} step${bad > 1 ? "s" : ""} not OK</b>` : " · every step OK"}</p>
           <div style="padding:4px 10px 8px">${lsTableHTML(L)}</div></div>`); } } catch (e) { console.warn(e); }
     return r; }; }
 document.addEventListener("click", e => { const b = e.target.closest("[data-lsedit]"); if (!b) return; e.preventDefault(); openLiftSteps(plan.loads.find(l => l.id === b.dataset.lsedit)); });
+document.addEventListener("click", e => { const b = e.target.closest("[data-lsfork]"); if (!b) return; e.preventDefault(); const ld = plan.loads.find(l => l.id === b.dataset.lsfork); if (!ld) return;
+  if (!lsAddForklift(ld)) return; delete ld.steps; markDirty(); renderAll(); openLiftSteps(ld); toast("Forklift placed at the tail – set how it holds the tail and its load centre in the Steps window", 5000); });
 
 // ---------------- the steps window: change them, see each one ----------------
 const LSV = { ld: null, sel: 0 };
@@ -130,27 +194,30 @@ const LSV = { ld: null, sel: 0 };
 function openLiftSteps(ld) { if (!ld) return; LSV.ld = ld; LSV.sel = 0; $("lsStyle").value = plan.meta.seqStyle || "cad"; $("lsStyle").onchange = () => { plan.meta.seqStyle = $("lsStyle").value; markDirty(); }; $("lsSub").textContent = ld.name || ""; renderLs(); $("dLs").showModal(); }
 function renderLs() {
   const ld = LSV.ld, L = liftSteps(ld); if (!L) { $("lsBody").innerHTML = `<p class="small">Hook a crane on to this load first.</p>`; return; }
-  const S = lsSteps(ld), s = L.steps[Math.min(LSV.sel, L.steps.length - 1)], two = L.cranes.length > 1;
+  const S = lsSteps(ld), s = L.steps[Math.min(LSV.sel, L.steps.length - 1)], two = L.cranes.length > 1 || !!L.ft;
   const hOpt = v => [["pick", "at the pick height"], ["lift", "1 m up"], ["carry", `carry height (${fx(L.carry.H, 1)} m)`], ["set", "at the set height"]].map(([k, n]) => `<option value="${k}" ${v === k ? "selected" : ""}>${n}</option>`).join("") + `<option value="num" ${typeof v === "number" ? "selected" : ""}>height…</option>`;
   const rows = S.map((x, i) => `<tr data-lsi="${i}" class="${i === LSV.sel ? "lssel" : ""}"><td>${i + 1}</td><td style="white-space:normal;min-width:140px"><input type="text" data-lsf="name" value="${escH(x.name || "")}"></td>
       <td><input type="number" data-lsf="t" min="0" max="100" step="5" value="${Math.round((+x.t || 0) * 100)}" style="width:62px"> %</td>
       <td><select data-lsf="h">${hOpt(x.h)}</select>${typeof x.h === "number" ? `<input type="number" data-lsf="hn" step="0.1" value="${x.h}" style="width:62px"> m` : ""}</td>
       <td><input type="number" data-lsf="tilt" step="5" value="${+x.tilt || 0}" style="width:58px">°</td>
-      ${two ? `<td><select data-lsf="release"><option value="">both on</option>${L.cranes.map(c => `<option value="${c.attach?.point || "C"}" ${x.release === (c.attach?.point || "C") ? "selected" : ""}>${escH(c.label || "crane")} off</option>`).join("")}</select></td>` : ""}
+      ${two ? `<td><select data-lsf="release"><option value="">both on</option>${(L.units || L.cranes).map(c => `<option value="${c.attach?.point || "C"}" ${x.release === (c.attach?.point || "C") ? "selected" : ""}>${escH(c.label || "crane")} off</option>`).join("")}</select></td>` : ""}
       <td style="white-space:nowrap"><button class="rmv" data-lsup ${i ? "" : "disabled"}>▲</button><button class="rmv" data-lsdel>×</button></td></tr>`).join("");
   $("lsBody").innerHTML = `<div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:12px">
     <div><p class="small" style="margin:0 0 6px">Each step: where along the way from pick to set (0 % = at the pick, 100 % = over the set position), how high the load is, how far it is turned up (upending) and which crane is off the hook. ${L.auto ? "These are the app's steps for this lift – change any and they become yours." : "Your steps – “Back to the app's steps” starts again."}</p>
       <table class="lse"><tr><th>#</th><th>Step</th><th>Along</th><th>Height</th><th>Turned up</th>${two ? "<th>Cranes</th>" : ""}<th></th></tr>${rows}</table>
       <div class="btnrow" style="margin-top:6px"><button id="lsAdd">+ Add a step after the one picked</button>${two && lsBuild2(ld) ? `<label class="chk" style="display:flex;flex-direction:row;gap:6px;align-items:center;margin-left:8px"><input type="checkbox" id="lsUp" ${L.up ? "checked" : ""} style="width:auto;margin:0"> top and tail upend</label>` : ""}</div>
-      <div style="margin-top:10px">${lsTableHTML(L, { full: true })}</div></div>
+      <div style="margin-top:10px">${lsTableHTML(L, { full: true })}</div>${L.ft ? lsForkPanel(L) : ""}</div>
     <div><div class="small" style="margin-bottom:4px"><b>Step ${s.no} – ${escH(s.name)}</b></div><div id="lsDraw" style="min-height:330px;border:1px solid var(--line);border-radius:6px;background:#fff"><p class="small" style="padding:10px">Drawing step…</p></div>
       <table class="lst" style="margin-top:6px"><tr><th></th>${s.per.map(q => `<th class="n">${escH(q.c.label || "Crane")}</th>`).join("")}</tr>
         ${[["Radius", q => fx(q.R, 2) + " m"], ["Slew (bearing)", q => fx(q.brg, 0) + "°"], ["Boom angle", q => q.ba.ok ? fx(q.ba.theta, 1) + "°" : "–"], ["Hook height / most", q => `${fx(q.z, 1)} / ${q.hMax != null ? fx(q.hMax, 1) : "–"} m`],
            ["Share from the rigging", q => q.rel ? "off" : fx(q.geom, 2) + " t"], ["Design share", q => q.design ? `${fx(q.design, 2)} t (${q.dWhy})` : "–"], ["Hook load (+ block)", q => q.rel ? "–" : fx(q.hookLoad, 2) + " t"],
-           ["Chart capacity", q => q.cap != null ? fx(q.cap, 1) + " t" + (q.rUsed ? ` (row ${fx(q.rUsed, 1)} m)` : "") : "–"], ["From the last step", q => escH((lsMoves(L.steps[s.no - 2], s).find(m => m.q === q) || {}).txt || "")], ["Use", q => q.rel ? "–" : q.util != null ? `<b style="color:${q.util > L.lim ? "var(--bad)" : "inherit"}">${fx(q.util, 0)}%</b>` : "–"]].map(([n, f]) => `<tr><td>${n}</td>${s.per.map(q => `<td class="n">${f(q)}</td>`).join("")}</tr>`).join("")}</table>
+           ["Chart capacity", q => q.cap != null ? fx(q.cap, 1) + " t" + (q.rUsed ? ` (row ${fx(q.rUsed, 1)} m)` : "") : "–"], ["From the last step", q => escH((lsMoves(L.steps[s.no - 2], s).find(m => m.q === q) || {}).txt || "")], ["Use", q => q.rel ? "–" : q.util != null ? `<b style="color:${q.util > L.lim ? "var(--bad)" : "inherit"}">${fx(q.util, 0)}%</b>` : "–"]].map(([n, f]) => `<tr><td>${n}</td>${s.per.map(q => `<td class="n">${q.fork ? lsForkCell(n, q, L, s) : f(q)}</td>`).join("")}</tr>`).join("")}</table>
       <p class="small">${s.under ? (s.clear >= 0 ? `The load is ${fx(s.clear, 2)} m over ${escH(s.under.name)} (${fx(s.under.top, 1)} m high).` : `<b style="color:var(--bad)">The load runs into ${escH(s.under.name)} (${fx(s.under.top, 1)} m high).</b>`) : "Nothing under the load at this step."}</p></div></div>`;
   const st = document.getElementById("lsCss") || Object.assign(document.createElement("style"), { id: "lsCss" }); st.textContent = `table.lse{width:100%;font-size:12px;border-collapse:collapse}table.lse td,table.lse th{white-space:nowrap;padding:2px 3px;border-bottom:1px solid var(--line);text-align:left}table.lse input[type=text]{width:100%}table.lse select{width:auto;max-width:128px}table.lse input[type=number]{padding:4px}table.lse tr.lssel{background:rgba(217,102,31,.08)}table.lse tr{cursor:pointer}`; document.head.append(st);
-  { const tok = LSV.tok = (LSV.tok || 0) + 1; setTimeout(async () => { try { if (tok !== LSV.tok) return; const pl = await lsPlanSVG(L, s, 14); if (tok !== LSV.tok) return; const el = await lsElevSVGs(L, s, 14); if (tok !== LSV.tok || !$("lsDraw")) return;
+  { const tok = LSV.tok = (LSV.tok || 0) + 1; setTimeout(async () => { try { if (tok !== LSV.tok) return; const pl = await lsPlanSVG(L, s, 14); if (tok !== LSV.tok) return;
+      if (L.ft) { const W = 1100, H = 700, pic = await lsCadFront(L, s, W, H); if (tok !== LSV.tok || !$("lsDraw")) return;
+        $("lsDraw").innerHTML = `<div style="border-bottom:1px solid var(--line)">${pl.replace(/^<svg /, '<svg style="width:100%;height:auto;display:block" ')}</div><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${pic.svg}${lsCallouts([...lsStageLabels(L, s, pic.proj), ...(pic.extra || [])], pic.occ, 0, 0, W, H, escH)}</svg>`; return; }
+      const el = await lsElevSVGs(L, s, 14); if (tok !== LSV.tok || !$("lsDraw")) return;
       const fit = v => v.replace(/^<svg /, '<svg style="width:100%;height:auto;display:block" ');
       $("lsDraw").innerHTML = `<div style="border-bottom:1px solid var(--line)">${fit(pl)}</div><div style="display:grid;grid-template-columns:repeat(${el.length},minmax(0,1fr))">${el.map(E => E ? `<div style="border-left:1px solid var(--line)">${fit(E.svg)}</div>` : "<div></div>").join("")}</div>`;
       } catch (e) { console.warn(e); } }, 0); }
@@ -165,6 +232,34 @@ function renderLs() {
     tr.querySelector("[data-lsdel]").onclick = () => { const st = own(); st.splice(i, 1); LSV.sel = Math.max(0, i - 1); markDirty(); renderLs(); }; });
   $("lsAdd").onclick = () => { const st = own(), cur = st[LSV.sel] || st[st.length - 1]; st.splice(LSV.sel + 1, 0, { ...clone(cur), name: "New step" }); LSV.sel++; markDirty(); renderLs(); };
   const u = $("lsUp"); if (u) u.onchange = () => { ld.upend = u.checked ? { to: 90 } : false; delete ld.steps; markDirty(); renderLs(); };
+  if (L.ft) lsForkPanelWire(L);
+}
+// the forklift's numbers in the step table, and its settings
+function lsForkCell(n, q, L, s) {
+  if (q.rel) return /From the last/.test(n) ? escH((lsMoves(L.steps[s.no - 2], s).find(m => m.q === q) || {}).txt || "") : "–";
+  const m = { "Radius": `load centre ${fx(q.cl * 1000, 0)} mm`, "Slew (bearing)": "–", "Boom angle": "–", "Hook height / most": `forks ${fx(q.forkH, 2)} / ${fx(q.h3, 2)} m`, "Share from the rigging": fx(q.geom, 2) + " t",
+    "Design share": q.design ? `${fx(q.design, 2)} t (${q.dWhy})` : "–", "Hook load (+ block)": `${fx(q.hookLoad, 2)} t on the forks`, "Chart capacity": `~${fx(q.cap, 1)} t at ${fx(q.cl * 1000, 0)} mm`,
+    "From the last step": escH((lsMoves(L.steps[s.no - 2], s).find(x => x.q === q) || {}).txt || ""), "Use": `<b style="color:${q.util > L.flim || q.axles[1] <= 0 ? "var(--bad)" : "inherit"}">${fx(q.util, 0)}%</b><div class="small">axles ${fx(q.axles[0], 1)} / ${fx(q.axles[1], 1)} t</div>` };
+  return m[n] ?? "–";
+}
+function lsForkPanel(L) {
+  const o = L.fork, f = o.fl, F = L.F;
+  return `<div class="card" style="margin-top:10px;padding:8px 10px"><b>Tailing forklift</b> <span class="small">– ${escH(F.src)}</span>
+    <div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-top:6px;align-items:end">
+      <label class="small">Forklift<select id="lfModel">${Object.values(FORKLIFTS).map(m => `<option value="${m.id}" ${m.id === f.model ? "selected" : ""}>${escH(m.name)} (${fx(m.Q, 1)} t @ ${fx(m.c0 * 1000, 0)} mm)</option>`).join("")}</select></label>
+      <label class="small">Holds the tail<select id="lfHow"><option value="forks" ${f.how !== "hook" ? "selected" : ""}>on the forks (cradle)</option><option value="hook" ${f.how === "hook" ? "selected" : ""}>fork-mounted lifting hook</option></select></label>
+      <label class="small">Load centre (mm)<input type="number" id="lfC" step="50" min="${F.c0 * 1000}" value="${Math.round((+f.c || F.c0) * 1000)}" style="width:90px"></label>
+      <label class="small">Attachment / cradle (t)<input type="number" id="lfAtt" step="0.05" min="0" value="${+f.attW || 0}" style="width:80px"></label>
+      <button id="lfDel" class="rmv" title="Take the forklift off this lift">Remove forklift</button></div>
+    <p class="small" style="margin:6px 0 0">Rated ${fx(F.Q, 1)} t at ${fx(F.c0 * 1000, 0)} mm; at ${fx((+f.c || F.c0) * 1000, 0)} mm ~${fx(flCap(F, +f.c || F.c0, f.mast), 1)} t. Checked for at least ${rule("tt.fork") ?? 75}% of the load while it holds the tail (Rules & limits), with the rear axle kept loaded.</p></div>`;
+}
+function lsForkPanelWire(L) {
+  const o = L.fork, f = o.fl, upd = () => { markDirty(); renderAll(); renderLs(); };
+  $("lfModel").onchange = () => { f.model = $("lfModel").value; const F = FORKLIFTS[f.model]; o.w = F.l2; o.h = F.b; o.hgt = F.h6; o.label = `Forklift – ${F.name}`; upd(); };
+  $("lfHow").onchange = () => { f.how = $("lfHow").value; upd(); };
+  $("lfC").onchange = () => { f.c = Math.max(L.F.c0, (+$("lfC").value || 0) / 1000); upd(); };
+  $("lfAtt").onchange = () => { f.attW = Math.max(0, +$("lfAtt").value || 0); upd(); };
+  $("lfDel").onclick = () => { plan.obstacles = plan.obstacles.filter(x => x !== o); delete L.ld.steps; markDirty(); renderAll(); renderLs(); };
 }
 // ================= each step drawn with the app's own engineering drawings =================
 // The plan and the elevations of a step are the same drawings as the plan sheet (cranes with their outriggers / tracks,
@@ -180,11 +275,15 @@ async function lsWith(L, s, fn) {
   try {
     ld.pick = { x: s.pose.x, y: s.pose.y, rot: s.pose.rot, h: s.h };
     if (R && lsBuild2(ld)) R.tilt = s.tilt || 0;
-    for (const q of s.per) { q.c.autoBoom = false; if (q.rel) q.c.tip = { ...(q.c.tip || {}), pick: { free: true, R: q.R, brg: q.brg } }; else if (q.c.tip) q.c.tip = { ...q.c.tip, pick: null }; }
-    LS_DRAW = { ld, tilt: s.tilt || 0, xc: (R && lsBuild2(ld) && typeof tiltFn === "function") ? (tiltFn(ld, { tilt: 1 }).xc || 0) : 0 };
+    for (const q of s.per) { if (q.fork) continue; q.c.autoBoom = false; if (q.rel) q.c.tip = { ...(q.c.tip || {}), pick: { free: true, R: q.R, brg: q.brg } }; else if (q.c.tip) q.c.tip = { ...q.c.tip, pick: null }; }
+    LS_DRAW = { ld, tilt: s.tilt || 0, xc: L.ft ? (+ld.cog || 0) : (R && lsBuild2(ld) && typeof tiltFn === "function") ? (tiltFn(ld, { tilt: 1 }).xc || 0) : 0 };
+    if (L.ft) { const fq = s.per.find(q => q.fork), o = L.fork; keep.fork = { o, x: o.x, y: o.y, rot: o.rot, fh: o._forkH };
+      o.x = fq.ctr[0]; o.y = fq.ctr[1]; o.rot = fq.rot; o._forkH = fq.forkH;
+      for (const q of s.per) if (!q.fork && !q.rel) q.c.tip = { ...(q.c.tip || {}), pick: { free: true, R: q.R, brg: q.brg } }; }
     return await fn();
   } finally {
     LS_DRAW = null; ld.pick = keep.pick; if (R) { if (keep.tilt === undefined) delete R.tilt; else R.tilt = keep.tilt; }
+    if (keep.fork) { const k = keep.fork; k.o.x = k.x; k.o.y = k.y; k.o.rot = k.rot; if (k.fh === undefined) delete k.o._forkH; else k.o._forkH = k.fh; }
     for (const k of keep.cr) { k.c.tip = k.tip; k.c.L = k.L; k.c.boomCfg = k.cfg; k.c._autoKey = k.ak; k.c.autoBoom = k.ab; }
     plan.phase = keep.phase;
   }
@@ -196,9 +295,10 @@ async function lsPlanSVG(L, s, pxPerM = 20) {
     const P = [];
     for (const c of L.cranes) { const C = REG.cranes[c.model], t = Math.max(C?.up?.tail || 0, (C?.car?.len || 12) * 0.62, 6) + 1; P.push([c.x - t, c.y - t], [c.x + t, c.y + t]); try { for (const pd of cranePads(c, C)) P.push(pd.w); } catch (e) { } }
     for (const q of [s.pose, L.ld.set]) for (const o of loadOutline(L.ld)) { const r = rot2(o, -(q.rot || 0)); P.push([q.x + r[0], q.y + r[1]]); }
-    for (const q of s.per) P.push(q.hook);
+    for (const q of s.per) { if (q.fork) { const F = q.F || L.F, u = q.u, v = [-u[1], u[0]]; for (const [kx, ky] of [[-F.l1 / 2, -F.b / 2], [F.l1 / 2, F.b / 2]]) P.push([q.ctr[0] + u[0] * kx + v[0] * ky, q.ctr[1] + u[1] * kx + v[1] * ky]); } else if (q.hook) P.push(q.hook); }
     let b = [Math.min(...P.map(p => p[0])), Math.min(...P.map(p => p[1])), Math.max(...P.map(p => p[0])), Math.max(...P.map(p => p[1]))]; const m = 1.5; b = [b[0] - m, b[1] - m - 2, b[2] + m, b[3] + m];
     let svg = await siteSVGStatic("pick", { pxPerM, bounds: b });
+    if (L.ft) svg = svg.replace(/>PICK \(tip moved\) R /g, ">R ");   // the crane holds the top: its hook is over the lug, not moved off
     return svg.replace(/>PICK \(tip moved\) R /g, ">OFF THE HOOK · R ").replace(/>PICK R /g, ">R ").replace(/ · PICK</g, "<"); });
 }
 // the elevation of each crane at one step: the crane, its boom luffed to the step's radius, the hook at the height the step
@@ -249,7 +349,11 @@ function lsTidyElev(sc, maxU) {
 }
 // what each crane does to get from the last step to this one – the instruction for the operator and the lift supervisor
 function lsMoves(prev, s) {
-  return s.per.map(q => { const p = prev && prev.per.find(x => x.c === q.c); if (q.rel && p && p.rel) return { q, txt: "off the hook" };
+  return s.per.map(q => { const p = prev && prev.per.find(x => x.c === q.c);
+    if (q.fork) { if (q.rel && p && p.rel) return { q, txt: "clear of the load" }; if (q.rel) return { q, txt: "lower the forks clear, back away 2.5 m" }; if (!p) return { q, txt: "forks under the tail, take the weight" };
+      const m = [], dd = Math.hypot(q.ctr[0] - p.ctr[0], q.ctr[1] - p.ctr[1]), dz = q.forkH - p.forkH; if (dd >= 0.05) m.push(`drive forward ${fx(dd, 1)} m`); if (Math.abs(dz) >= 0.05) m.push(`${dz > 0 ? "raise" : "lower"} forks ${fx(Math.abs(dz), 2)} m`);
+      return { q, txt: m.length ? m.join(" · ") : "hold" }; }
+    if (q.rel && p && p.rel) return { q, txt: "off the hook" };
     if (q.rel) return { q, txt: "lower off, unhook, hook clear" }; if (!p) return { q, txt: "hook on, take the weight" };
     const m = [], dz = q.z - p.z, dR = q.R - p.R; let dB = q.brg - p.brg; dB = ((dB + 540) % 360) - 180;
     if (Math.abs(dz) >= 0.1) m.push(`${dz > 0 ? "hoist" : "lower"} ${fx(Math.abs(dz), 1)} m`);
@@ -266,7 +370,7 @@ async function liftSeqSheets(ld, liftLabel) {
   const wrapT = (t, n) => (typeof wrapLines === "function" ? wrapLines(t, n) : [t]);
   // ---- summary
   { const F = ssFrame(`LIFT SEQUENCE · ${nm} – ${up ? "top and tail upend" : L.cranes.length > 1 ? "tandem lift" : "lift"} in ${L.steps.length} steps`, liftLabel), e = F.e, x0 = F.M + 30, tw = F.W - 2 * F.M - 60;
-    const top = F.M + 80, ch = L.cranes, colsW = [0.25, 0.09, ...ch.flatMap(() => [0.06, 0.07, 0.07, 0.065, 0.05])], sw = colsW.reduce((a, b) => a + b, 0), wd = colsW.map(v => v * tw / sw);
+    const top = F.M + 80, ch = L.units || L.cranes, colsW = [0.25, 0.09, ...ch.flatMap(() => [0.06, 0.07, 0.07, 0.065, 0.05])], sw = colsW.reduce((a, b) => a + b, 0), wd = colsW.map(v => v * tw / sw);
     const tabH = (L.steps.length + 2) * 38 + 20, planH = F.bandY - top - tabH - 90;
     const pl = await siteSVGStatic("both", { pxPerM: 20, focus: true });
     F.add(nestSVG(pl, x0, top, tw, planH));
@@ -275,16 +379,17 @@ async function liftSeqSheets(ld, liftLabel) {
       v.forEach((t, i) => { F.add(`<text x="${i ? x + wd[i] - 10 : x + 10}" y="${y + 26}" font-size="20" ${o.bold ? 'font-weight="700"' : ""} text-anchor="${i ? "end" : "start"}" fill="${o.col?.[i] || "#16202a"}">${e(t)}</text>`); x += wd[i]; }); y += 38; };
     const y0 = y; let xh = x0 + wd[0] + wd[1];
     ch.forEach((c, k) => { const w5 = wd.slice(2 + k * 5, 7 + k * 5).reduce((a, b) => a + b, 0); F.add(`<rect x="${xh}" y="${y}" width="${w5}" height="38" fill="${k % 2 ? "#e2e8ee" : "#d5dde5"}"/><text x="${xh + w5 / 2}" y="${y + 26}" font-size="21" font-weight="700" text-anchor="middle" fill="#16202a">${e((c.label || "Crane") + " · " + (REG.cranes[c.model]?.name || c.model))}</text>`); xh += w5; }); y += 38;
-    row(["Step", "Load", ...ch.flatMap(() => ["R (m)", "Share (t)", "Cap. (t)", "Hook (m)", "Use"])], { bold: true, fill: "#eef1f4" });
-    L.steps.forEach((s, k) => row([`${s.no}. ${s.name}`, `${fx(s.h, 1)} m${s.tilt ? " · " + fx(s.tilt, 0) + "°" : ""}`, ...s.per.flatMap(q => q.rel ? ["–", "off", "–", "–", "–"] : [fx(q.R, 1), fx(q.used, 1) + (q.design > q.geom + 0.01 ? "*" : ""), q.cap != null ? fx(q.cap, 1) : "–", fx(q.z, 1), q.util != null ? fx(q.util, 0) + "%" : "–"])],
+    row(["Step", "Load", ...ch.flatMap(c => c.attach?.point === "F" ? ["Load c. (m)", "Share (t)", "~Cap. (t)", "Forks (m)", "Use"] : ["R (m)", "Share (t)", "Cap. (t)", "Hook (m)", "Use"])], { bold: true, fill: "#eef1f4" });
+    L.steps.forEach((s, k) => row([`${s.no}. ${s.name}`, `${fx(s.h, 1)} m${s.tilt ? " · " + fx(s.tilt, 0) + "°" : ""}`, ...s.per.flatMap(q => q.rel ? ["–", q.fork ? "clear" : "off", "–", "–", "–"] : q.fork ? [fx(q.cl, 2), fx(q.used, 1) + (q.design > q.geom + 0.01 ? "*" : ""), fx(q.cap, 1), fx(q.forkH, 2), fx(q.util, 0) + "%"] : [fx(q.R, 1), fx(q.used, 1) + (q.design > q.geom + 0.01 ? "*" : ""), q.cap != null ? fx(q.cap, 1) : "–", fx(q.z, 1), q.util != null ? fx(q.util, 0) + "%" : "–"])],
       { fill: k % 2 ? "#f7f9fa" : null, col: ["", "", ...s.per.flatMap(q => ["", "", "", q.tooHigh ? "#b42318" : "", ucol(q.util)])] }));
     F.add(`<rect x="${x0}" y="${y0}" width="${tw}" height="${y - y0}" fill="none" stroke="#16202a" stroke-width="2"/>`);
-    const notes = [`Share = the crane's part of the load + rigging at that step (from the rigging geometry)${up ? `; * checked for the design share – top crane ${rule("tt.top") ?? 100}%, tail crane ${rule("tt.tail") ?? 75}% of the load + rigging while both cranes are on` : ""}.`,
+    const notes = [`Share = ${L.ft ? "each machine's" : "the crane's"} part of the load + rigging at that step (from the rigging geometry)${up ? `; * checked for the design share – top crane ${rule("tt.top") ?? 100}%, ${L.ft ? `forklift ${rule("tt.fork") ?? 75}% of the load` : `tail crane ${rule("tt.tail") ?? 75}% of the load + rigging`} while both are on` : ""}.`,
+      ...(L.ft ? [`Forklift: ${L.F.name}, ${fx(L.F.Q, 1)} t rated at ${fx(L.F.c0 * 1000, 0)} mm; capacity at the load centre ~ by the load moment about the front axle (check against the truck's plate). Forks = fork height.`] : []),
       `Capacity from each crane's load chart at the step's radius (next row up). Use = (share + hook block + extras) ÷ capacity, limit ${lim}%. Hook = height of the hook at that step.`];
     notes.forEach((t, i) => F.add(`<text x="${x0}" y="${y + 32 + i * 28}" font-size="19" fill="#3d4a57">${e(t)}</text>`));
     out.push({ name: `lift_sequence_${nm.replace(/[^\w\-]+/g, "_")}`, svg: F.close() }); }
   // ---- the steps, three to a sheet
-  if (L.cranes.length > 1 && ((plan.meta.seqStyle || "cad") === "cad" || (typeof glAvailable === "function" && glAvailable()))) { for (const s of L.steps) out.push(await lsStageSheet(L, s, liftLabel)); return out; }
+  if ((L.cranes.length > 1 || L.ft) && (L.ft || (plan.meta.seqStyle || "cad") === "cad" || (typeof glAvailable === "function" && glAvailable()))) { for (const s of L.steps) out.push(await lsStageSheet(L, s, liftLabel)); return out; }
   const per = 1, nS = Math.ceil(L.steps.length / per);
   for (let k = 0; k < nS; k++) {
     const st = L.steps.slice(k * per, k * per + per), a = st[0].no, b = st[st.length - 1].no;
@@ -316,7 +421,7 @@ async function liftSeqSheets(ld, liftLabel) {
 }
 async function withLiftA(i, fn) { syncLift(); const pc = plan.cranes, pl = plan.loads, L = plan.lifts[i]; plan.cranes = L.cranes; plan.loads = L.loads; try { return await fn(L); } finally { plan.cranes = pc; plan.loads = pl; } }
 { const _bs = buildSheets; buildSheets = async function (...a) { const out = await _bs.apply(this, a);
-    try { for (let i = 0; i < plan.lifts.length; i++) await withLiftA(i, async Lf => { for (const ld of Lf.loads) { if (lsCranes(ld).length < 2 && !(Array.isArray(ld.steps) && ld.steps.length)) continue;
+    try { for (let i = 0; i < plan.lifts.length; i++) await withLiftA(i, async Lf => { for (const ld of Lf.loads) { if (!lsTwo(ld) && !(Array.isArray(ld.steps) && ld.steps.length)) continue;
           for (const sh of await liftSeqSheets(ld, Lf.name)) out.push({ ...sh, name: `${sh.name}_${i + 1}`, regen: () => sh.svg }); } }); } catch (e) { console.warn("lift sequence sheets", e); }
     return out; }; }
 
@@ -326,14 +431,16 @@ async function withLiftA(i, fn) { syncLift(); const pc = plan.cranes, pl = plan.
 // The camera looks across the load at the cranes, level, so the picture reads like the stage drawings of a top-and-tail plan.
 function lsLugsWorld(L, s) {
   const ld = L.ld, R = ld.rig, P = s.pose, h0 = s.h, d = loadDims(ld), build = R && lsBuild2(ld), TT = build && typeof tiltFn === "function" ? tiltFn(ld, { ...R, tilt: s.tilt || 0 }) : (p => p);
+  if (L.ft) { const sp = tandemSpan(ld) || d.x * 0.9, T2 = tiltFn(ld, { tilt: s.tilt || 0 }), zl = liftPointZ(ld);
+    return [T2([-sp / 2, 0, zl]), T2([sp / 2, 0, L.fork.fl.how === "hook" ? zl : 0])].map(p => { const v = rot2([p[0], p[1]], -(P.rot || 0)); return [P.x + v[0], P.y + v[1], h0 + p[2]]; }); }
   let lugs; if (build && (ld.pts || []).length >= 2) { const byK = k => ld.pts.find(p => p.k === k) || {}; const pa = R.legPts?.[0] ? byK(R.legPts[0]) : ld.pts[0], pb = R.legPtsB?.[0] ? byK(R.legPtsB[0]) : ld.pts[1]; lugs = [pa, pb].map(p => TT([+p.x || 0, +p.y || 0, +p.z || 0])); }
   else { const sp = tandemSpan(ld) || 0, zl = typeof liftPointZ === "function" ? liftPointZ(ld) : d.z; lugs = [[-sp / 2, 0, zl], [sp / 2, 0, zl]]; }
   return lugs.map(p => { const v = rot2([p[0], p[1]], -(P.rot || 0)); return [P.x + v[0], P.y + v[1], h0 + p[2]]; });
 }
 // the load turned up in 3D (about its CoG, lowest point on the load's bottom height – as the rigging works it out)
 { const _l3 = load3D; load3D = function (M, ld, pos, ghost) {
-    const D = LS_DRAW; if (!D || !D.d3 || D.ld !== ld || ghost || !D.s || !D.s.tilt || !lsBuild2(ld)) return _l3.call(this, M, ld, pos, ghost);
-    const T = new Mesh(); _l3.call(this, T, ld, pos, ghost); const TT = tiltFn(ld, ld.rig), P = D.s.pose, h0 = +pos.h || 0;
+    const D = LS_DRAW; if (!D || !D.d3 || D.ld !== ld || ghost || !D.s || !D.s.tilt || !(lsBuild2(ld) || D.L?.ft)) return _l3.call(this, M, ld, pos, ghost);
+    const T = new Mesh(); _l3.call(this, T, ld, pos, ghost); const TT = D.L?.ft ? tiltFn(ld, { tilt: D.s.tilt }) : tiltFn(ld, ld.rig), P = D.s.pose, h0 = +pos.h || 0;
     const f = w => { const v = rot2([w[0] - P.x, w[1] - P.y], P.rot || 0), q = TT([v[0], v[1], w[2] - h0]), r = rot2([q[0], q[1]], -(P.rot || 0)); return [P.x + r[0], P.y + r[1], h0 + q[2]]; };
     for (const fc of T.faces) M.faces.push({ ...fc, pts: fc.pts.map(f) }); for (const l of T.lines) M.lines.push({ ...l, a: f(l.a), b: f(l.b) }); for (const l of T.labels) M.labels.push({ ...l, p: l.p ? f(l.p) : l.p });
   }; }
@@ -391,7 +498,7 @@ async function lsStageSheet(L, s, liftLabel) {
   const ld = L.ld, nm = ld.name || "load", lim = L.lim, ucol = u => u == null ? "#566476" : u > lim ? "#b42318" : u > lim * 0.9 ? "#9a6200" : "#1d7a4f";
   const F = ssFrame(`LIFT SEQUENCE · ${nm} – STAGE ${s.no} of ${L.steps.length}: ${s.name.toUpperCase()}`, liftLabel), e = F.e, x0 = F.M + 4, tw = F.W - 2 * F.M - 8;
   const top = F.M + 76, stripH = 470, ph = F.bandY - top - stripH, pw = tw;
-  const cad = (plan.meta.seqStyle || "cad") === "cad", pic = cad ? await lsCadFront(L, s, Math.round(pw), Math.round(ph)) : await lsFrontPic(L, s, Math.round(pw), Math.round(ph));
+  const cad = (plan.meta.seqStyle || "cad") === "cad" || !!L.ft, pic = cad ? await lsCadFront(L, s, Math.round(pw), Math.round(ph)) : await lsFrontPic(L, s, Math.round(pw), Math.round(ph));
   if (pic) {
     F.add(pic.url ? `<image href="${pic.url}" x="${x0}" y="${top}" width="${pw}" height="${ph}"/>` : `<g transform="translate(${x0} ${top})">${pic.svg}</g>`);
     F.add(lsCallouts([...lsStageLabels(L, s, pic.proj), ...(pic.extra || [])], pic.occ, x0, top, pw, ph, e));
@@ -403,12 +510,13 @@ async function lsStageSheet(L, s, liftLabel) {
   const kp = await lsPlanSVG(L, s, 14); F.add(nestSVG(kp, x0 + 6, sy + 30, kpW - 20, sh - 34)); F.add(`<text x="${x0 + 14}" y="${sy + 24}" font-size="23" font-weight="700" fill="#16202a">KEY PLAN</text><line x1="${x0 + kpW}" y1="${sy - 10}" x2="${x0 + kpW}" y2="${F.bandY}" stroke="#16202a" stroke-width="2"/>`);
   const mv = lsMoves(L.steps[s.no - 2], s), cw = (tw - kpW) / s.per.length;
   mv.forEach(({ q, txt }, k) => { const cx = x0 + kpW + k * cw + 24; let y = sy + 30; if (k) F.add(`<line x1="${cx - 24}" y1="${sy - 10}" x2="${cx - 24}" y2="${F.bandY}" stroke="#9aa5b1" stroke-width="1.5"/>`);
-    F.add(`<text x="${cx}" y="${y}" font-size="30" font-weight="700" fill="${q.c.color || "#16202a"}">${e(`${q.c.label || "Crane"} · ${REG.cranes[q.c.model]?.name || q.c.model}`)}</text>`); y += 46;
+    F.add(`<text x="${cx}" y="${y}" font-size="30" font-weight="700" fill="${q.c.color || "#16202a"}">${e(q.fork ? (q.c.label || "Forklift") : `${q.c.label || "Crane"} · ${REG.cranes[q.c.model]?.name || q.c.model}`)}</text>`); y += 46;
     F.add(`<text x="${cx}" y="${y}" font-size="26" font-weight="700" fill="#16202a">${e(txt.charAt(0).toUpperCase() + txt.slice(1))}</text>`); y += 44;
-    const rows = q.rel ? [] : [["Radius", `${fx(q.R, 1)} m`], ["Slew / boom angle", `${fx(q.brg, 0)}° / ${q.ba.ok ? fx(q.ba.theta, 1) + "°" : "–"}`], ["Hook height (most)", `${fx(q.z, 1)} m (${q.hMax != null ? fx(q.hMax, 1) : "–"} m)`],
+    const rows = q.rel ? [] : q.fork ? [["Fork height (mast lift)", `${fx(q.forkH, 2)} m (${fx(q.h3, 2)} m)`], ["Load centre", `${fx(q.cl * 1000, 0)} mm`], ["Share on the forks", `${fx(q.geom, 2)} t`], ...(q.design > q.geom + 0.01 ? [[`Checked for (${q.dWhy})`, `${fx(q.design, 2)} t`]] : []),
+      ["On the forks (+ attachment)", `${fx(q.hookLoad, 2)} t`], ["Capacity at load centre", `~${fx(q.cap, 1)} t`], ["Axle loads front / rear", `${fx(q.axles[0], 1)} / ${fx(q.axles[1], 1)} t`]] : [["Radius", `${fx(q.R, 1)} m`], ["Slew / boom angle", `${fx(q.brg, 0)}° / ${q.ba.ok ? fx(q.ba.theta, 1) + "°" : "–"}`], ["Hook height (most)", `${fx(q.z, 1)} m (${q.hMax != null ? fx(q.hMax, 1) : "–"} m)`],
       ["Share from the rigging", `${fx(q.geom, 2)} t`], ...(q.design > q.geom + 0.01 ? [[`Checked for (${q.dWhy})`, `${fx(q.design, 2)} t`]] : []), ["Hook load (+ block)", `${fx(q.hookLoad, 2)} t`], ["Chart capacity", q.cap != null ? `${fx(q.cap, 1)} t${q.rUsed ? ` (${fx(q.rUsed, 1)} m row)` : ""}` : "–"]];
     for (const [a, b] of rows) { F.add(`<text x="${cx}" y="${y}" font-size="23" fill="#3d4a57">${e(a)}</text><text x="${cx + cw - 60}" y="${y}" font-size="23" font-weight="700" text-anchor="end" fill="#16202a">${e(b)}</text>`); y += 33; }
-    if (!q.rel) F.add(`<text x="${cx}" y="${y + 8}" font-size="25" fill="#3d4a57">Use</text><text x="${cx + cw - 60}" y="${y + 8}" font-size="34" font-weight="700" text-anchor="end" fill="${ucol(q.util)}">${q.util != null ? fx(q.util, 0) + "%" : "–"}</text>`); });
+    if (!q.rel) F.add(`<text x="${cx}" y="${y + 8}" font-size="25" fill="#3d4a57">Use</text><text x="${cx + cw - 60}" y="${y + 8}" font-size="34" font-weight="700" text-anchor="end" fill="${q.fork ? (q.util > L.flim || q.axles[1] <= 0 ? "#b42318" : q.util > L.flim * 0.9 ? "#9a6200" : "#1d7a4f") : ucol(q.util)}">${q.util != null ? fx(q.util, 0) + "%" : "–"}</text>`); });
   return { name: `lift_sequence_${nm.replace(/[^\w\-]+/g, "_")}_stage_${s.no}`, svg: F.close() };
 }
 
@@ -428,9 +536,13 @@ function lsOcc(M, proj, W, H, c = 12) {
 // the callouts of a stage: each crane at its boom head, each lifting point with its rigging, the load
 function lsStageLabels(L, s, proj) {
   const ld = L.ld, out = [], lugs = lsLugsWorld(L, s);
-  s.per.forEach(q => { const C = REG.cranes[q.c.model], i = q.c.attach?.point === "B" ? 1 : 0, tip = q.ba.ok ? [q.c.x + (q.hook[0] - q.c.x) * 1, q.c.y + (q.hook[1] - q.c.y) * 1, q.hMax != null ? q.hMax + 2 : q.z + 6] : [q.hook[0], q.hook[1], q.z];
+  s.per.forEach(q => {
+    if (q.fork) { const F = q.F || L.F, top = proj([q.ctr[0], q.ctr[1], F.h6]); if (top) out.push({ a: top, col: "#8a6a00", lines: [`${q.c.label || "Forklift"}`, q.rel ? "Forks lowered clear – backed away" : `Forks ${fx(q.forkH, 2)} m · load centre ${fx(q.cl * 1000, 0)} mm`, ...(q.rel ? [] : [`${fx(q.hookLoad, 1)} t on ~${fx(q.cap, 1)} t = ${fx(q.util, 0)}%`])], pref: -120 });
+      if (!q.rel) { const b = proj(lsLugsWorld(L, s)[1]); if (b) out.push({ a: b, col: "#0b5e4f", lines: [L.fork.fl.how === "hook" ? "Tail end · fork-mounted lifting hook" : "Tail end · resting on the forks (cradle)", `${fx(q.used, 1)} t at ${fx(q.cl * 1000, 0)} mm from the fork face`], pref: 90, small: true }); }
+      return; }
+    const C = REG.cranes[q.c.model], i = q.c.attach?.point === "B" ? 1 : 0, tip = q.ba.ok ? [q.c.x + (q.hook[0] - q.c.x) * 1, q.c.y + (q.hook[1] - q.c.y) * 1, q.hMax != null ? q.hMax + 2 : q.z + 6] : [q.hook[0], q.hook[1], q.z];
     const a = proj(tip); if (a) out.push({ a, col: q.c.color || "#16202a", lines: [`${q.c.label || "Crane"} · ${C?.name || q.c.model}`, q.ba.ok ? `Boom ${fx(q.c.L, 1)} m @ ${fx(q.ba.theta, 1)}° · R ${fx(q.R, 1)} m` : `R ${fx(q.R, 1)} m`, q.rel ? "Off the hook" : `Hook ${fx(q.z, 1)} m · ${fx(q.hookLoad, 1)} t on ${q.cap != null ? fx(q.cap, 1) : "–"} t = ${q.util != null ? fx(q.util, 0) + "%" : "–"}`], pref: -90 });
-    if (!q.rel) { const b = proj(lugs[i]), rt = lsRigText(ld, i); if (b) out.push({ a: b, col: "#0b5e4f", lines: [`${L.up ? (i ? "Tail end rigging" : "Top end rigging") : "Lifting point " + (i ? "B" : "A")} · ${q.c.label || "crane"}`, ...(rt ? wrapLines(rt, 44).slice(0, 3) : [])], pref: 90, small: true }); } });
+    if (!q.rel) { const b = proj(lugs[i]), rt = lsRigText(ld, i) || (L.ft ? `Top sling, hook ${fx(+ld.tandemRig || 0, 1)} m above the lug` : ""); if (b) out.push({ a: b, col: "#0b5e4f", lines: [`${L.up ? (i ? "Tail end rigging" : "Top end rigging") : "Lifting point " + (i ? "B" : "A")} · ${q.c.label || "crane"}`, ...(rt ? wrapLines(rt, 44).slice(0, 3) : [])], pref: 90, small: true }); } });
   { const lg = lsLugsWorld(L, s), m = [(lg[0][0] + lg[1][0]) / 2, (lg[0][1] + lg[1][1]) / 2, (lg[0][2] + lg[1][2]) / 2], a = proj(m);
     if (a) out.push({ a, col: "#16202a", lines: [`${ld.name || "Load"} · ${fx(+ld.weight || 0, 1)} t`, `${s.tilt ? `turned up ${fx(s.tilt, 0)}°` : "level"} · bottom ${fx(s.h, 1)} m up`], pref: s.tilt > 45 ? 0 : -60, small: true }); }
   return out;
@@ -467,7 +579,7 @@ async function lsCadFront(L, s, W, H) {
       { const tx = P9.x - P0.x, ty = P9.y - P0.y, tl = Math.hypot(tx, ty); if (tl > 1 && !L.up && L.cranes.length > 1) { const a = L.cranes[0], b = L.cranes[1], ux = b.x - a.x, uy = b.y - a.y, ul = Math.hypot(ux, uy) || 1; n = [-uy / ul, ux / ul]; if (n[0] * tx + n[1] * ty < 0) n = [-n[0], -n[1]]; } }
       const d = [n[0], n[1], 0], r = [n[1], -n[0], 0], M = buildMesh("pick");
       // framed on the cranes, booms and the load, room left round it for the callouts
-      const pts = []; for (const st of L.steps) { for (const q of st.per) { const C = REG.cranes[q.c.model], t = (C?.car?.len || 12) * 0.5; pts.push([q.c.x - t, q.c.y - t, 0], [q.c.x + t, q.c.y + t, 0], [q.hook[0], q.hook[1], (q.hMax || q.z) + 3]); }
+      const pts = []; for (const st of L.steps) { for (const q of st.per) { if (q.fork) { const F = q.F || L.F; pts.push([q.ctr[0] - F.l1 / 2, q.ctr[1] - F.l1 / 2, 0], [q.ctr[0] + F.l1 / 2, q.ctr[1] + F.l1 / 2, F.h4]); continue; } const C = REG.cranes[q.c.model], t = (C?.car?.len || 12) * 0.5; pts.push([q.c.x - t, q.c.y - t, 0], [q.c.x + t, q.c.y + t, 0], [q.hook[0], q.hook[1], (q.hMax || q.z) + 3]); }
         for (const p of lsLugsWorld(L, st)) pts.push(p); const ex = loadExtent(L.ld), Q = st.pose; pts.push([Q.x - ex, Q.y - ex, st.h], [Q.x + ex, Q.y + ex, st.h]); }
       let x0 = 1e9, x1 = -1e9, z1 = 0; for (const p of pts) { const a = vdot(p, r); x0 = Math.min(x0, a); x1 = Math.max(x1, a); z1 = Math.max(z1, p[2]); }
       const padX = 380, padT = 120, padB = 150, k = Math.min((W - 2 * padX) / (x1 - x0), (H - padT - padB) / Math.max(5, z1)), X = a => W / 2 + (a - (x0 + x1) / 2) * k, Y = z => H - padB - z * k;
@@ -490,7 +602,7 @@ async function lsCadFront(L, s, W, H) {
       // hook heights dimensioned clear of the drawing: left-hand cranes on the left, right-hand cranes on the right, extension line from the hook
       const xl = X(x0), xr = X(x1); let nl = 0, nr = 0;
       s.per.forEach(q => { if (q.rel) return; const hp = proj([q.hook[0], q.hook[1], Math.min(q.z, q.hMax ?? q.z)]), left = hp[0] < (xl + xr) / 2, dx = left ? xl - 60 - 70 * nl++ : xr + 60 + 70 * nr++, col = q.c.color || "#16202a";
-        g += `<line x1="${hp[0]}" y1="${hp[1]}" x2="${dx + (left ? -16 : 16)}" y2="${hp[1]}" stroke="${col}" stroke-width="1" stroke-dasharray="6 5"/>` + dimV(dx, Math.min(q.z, q.hMax ?? q.z), `HOOK ${fx(q.z, 1)} m`, col); dims.push([dx, hp[1]]); });
+        g += `<line x1="${hp[0]}" y1="${hp[1]}" x2="${dx + (left ? -16 : 16)}" y2="${hp[1]}" stroke="${col}" stroke-width="1" stroke-dasharray="6 5"/>` + dimV(dx, Math.min(q.z, q.hMax ?? q.z), q.fork ? `FORKS ${fx(q.z, 2)} m` : `HOOK ${fx(q.z, 1)} m`, col); dims.push([dx, hp[1]]); });
       // what the load passes over: the gap between its bottom and the top of the item, dimensioned
       if (s.under && s.clear != null) { const P = s.pose, xm = proj([P.x, P.y, 0])[0] + (loadDims(L.ld).x / 2) * k * 0.0, ya = Y(s.under.top), yb = Y(s.h), col = s.clear < TRAVEL_CLEAR - 0.01 ? "#b42318" : "#16202a", xx = xm;
         g += `<line x1="${xx - 60}" y1="${ya}" x2="${xx + 60}" y2="${ya}" stroke="${col}" stroke-width="1.6" stroke-dasharray="8 5"/><line x1="${xx}" y1="${ya}" x2="${xx}" y2="${yb}" stroke="${col}" stroke-width="1.8"/><path d="M${xx - 7} ${ya - 12}L${xx} ${ya}L${xx + 7} ${ya - 12}M${xx - 7} ${yb + 12}L${xx} ${yb}L${xx + 7} ${yb + 12}" fill="none" stroke="${col}" stroke-width="1.8"/>`;

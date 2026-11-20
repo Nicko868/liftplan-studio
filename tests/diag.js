@@ -397,7 +397,7 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
         await p.evaluate(() => goHome()); await p.waitForTimeout(300);
       }
       if (n) await shot(p, '95_samples');
-      check('Sample plans: top and tail (2) and a moving tandem lift open from the start screen and give their full sheet sets', n >= 3 && got.filter(g => g.up).length >= 2 && got.some(g => !g.up) && got.every(g => g.steps >= 7 && g.bad === 0 && g.stages >= g.steps && g.ssb === 0 && g.saved && g.open), JSON.stringify(got));
+      check('Sample plans: top and tail (2 with cranes, 1 with a forklift) and a moving tandem lift open from the start screen and give their full sheet sets', n >= 4 && got.filter(g => g.up).length >= 3 && got.some(g => !g.up) && got.every(g => g.steps >= 7 && g.bad === 0 && g.stages >= g.steps && g.ssb === 0 && g.saved && g.open), JSON.stringify(got));
       check('No script errors with the samples', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
     // ---------- 11. the sample plans are in the plans list – once; a deleted sample stays deleted ----------
@@ -408,8 +408,35 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       await p.evaluate(async () => { await CAP.db.doc('plans/sample-2').delete(); }); await p.reload(); await p.waitForTimeout(1800);
       const g2 = await p.evaluate(() => [planIndex.filter(x => /^sample-/.test(x.id)).length, planIndex.length, $('stList').textContent.includes('Sample – Top and tail')]);
       const g3 = await p.evaluate(() => { const s = planIndex.find(x => x.id === 'sample-1'); openPlan(clone(s)); const L = liftSteps(plan.loads[0]); return [plan.name, L && L.steps.length, L && L.steps.every(q => q.ok)]; });
-      check('Sample plans are in Lift plans (once), a deleted one stays deleted, and they open as normal plans', g1.length === 3 && g1.every(n => /^Sample – /.test(n)) && g2[0] === 2 && g2[1] === 2 && g2[2] && g3[1] >= 7 && g3[2], JSON.stringify([g1, g2, g3]));
+      check('Sample plans are in Lift plans (once), a deleted one stays deleted, and they open as normal plans', g1.length === 4 && g1.every(n => /^Sample – /.test(n)) && g2[0] === 3 && g2[1] === 3 && g2[2] && g3[1] >= 7 && g3[2], JSON.stringify([g1, g2, g3]));
       await ctx.close();
+    }
+    // ---------- 12. top and tail with a forklift: the engine, the checks, the button and the sheets ----------
+    {
+      p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900);
+      const g = await p.evaluate(async () => {
+        const F = FORKLIFTS.H16XD6, ax = flAxles(F, F.Q, F.c0), c12 = flCap(F, 1.2), out = { ax: ax.map(v => +v.toFixed(3)), c12: +c12.toFixed(2) };
+        const smp = SAMPLE_PLANS.find(s => /forklift/i.test(s.title)); openPlan(clone(smp.plan)); const ld = plan.loads[0], L = liftSteps(ld), cr = plan.cranes[0];
+        const hold = L.steps.filter(s => !s.per[1].rel), rel = L.steps.filter(s => s.per[1].rel), sp = tandemSpan(ld), tailW = (+ld.weight) * ((+ld.cog || 0) + sp / 2) / sp;
+        const dist = hold.map(s => Math.hypot(s.per[1].ctr[0] - cr.x, s.per[1].ctr[1] - cr.y));
+        out.ft = L.ft; out.n = L.steps.length; out.ok = L.steps.every(s => s.ok); out.tail = hold.every(s => Math.abs(s.per[1].geom - tailW) < 0.01); out.design = hold.every(s => Math.abs(s.per[1].design - 0.75 * ld.weight) < 0.01);
+        out.drivesIn = dist.every((d, i) => !i || d <= dist[i - 1] + 1e-6) && dist[0] - dist[dist.length - 1] > 3; out.hookFixed = hold.every(s => Math.abs(s.per[0].R - hold[0].per[0].R) < 0.01);
+        out.rel = rel.length >= 1 && rel[0].tilt >= 89.5 && rel.every(s => Math.abs(s.per[0].geom - (ld.weight + rigW(ld))) < 0.01);
+        const sh = await buildSheets(), seq = sh.filter(s => /lift_sequence/.test(s.name)); out.sheets = seq.length; out.forkOnSheets = seq.filter(s => /Hyster H16XD6/.test(s.svg) && /FORKS /.test(s.svg)).length;
+        L.fork.fl.attW = 12; LS_CACHE.clear(); out.over = craneSummary(cr).warn.some(w => /Forklift.*over the 100% limit/.test(w)); L.fork.fl.attW = 0; LS_CACHE.clear();
+        // the button on a one-crane long load puts a forklift on the tail
+        const q = blankPlan(); q.name = 'Fork button'; openPlan(q); const l2 = { ...clone(LOAD_PRESETS.box), id: uid(), name: 'Pipe', kind: 'cyl', orient: 'horizontal', L: 12, D: 0.6, weight: 6, span: 11.5, pick: { x: 0, y: 0, rot: 0, h: 0 }, set: { x: 0, y: 0, rot: 0, h: 0 } };
+        plan.loads.push(l2); normLoad(l2); addCraneOf('XCA230'); plan.cranes[0].attach = { load: l2.id, point: 'C' }; plan.cranes[0].x = -15; plan.cranes[0].chartId = 'xca_8.3_80'; renderAll();
+        const btn = document.querySelector(`[data-lsfork="${l2.id}"]`); out.btn = !!btn; if (btn) btn.click(); await new Promise(r => setTimeout(r, 400));
+        out.added = lsFT(l2) && plan.cranes[0].attach.point === 'A' && $('dLs').open && !!$('lfModel'); $('dLs').close();
+        return out; });
+      await shot(p, '96_forklift');
+      check('Forklift H16XD6: the axle-load model gives the spec sheet\'s rated axle loads; capacity carried to a 1.2 m load centre by moment', g.ax[0] === 33.853 && g.ax[1] === 2.655 && Math.abs(g.c12 - 11.76) < 0.02, JSON.stringify([g.ax, g.c12]));
+      check('Top and tail with a forklift: crane hook stays over the top, forklift drives in, tail share and 75% design share at every stage, released at vertical, all OK', g.ft && g.n >= 9 && g.ok && g.tail && g.design && g.drivesIn && g.hookFixed && g.rel, JSON.stringify(g));
+      check('Forklift lift sheets: summary + one page per stage, the forklift drawn and dimensioned; an overloaded forklift is flagged', g.sheets === g.n + 1 && g.forkOnSheets >= g.n - 2 && g.over, JSON.stringify([g.sheets, g.forkOnSheets, g.over]));
+      check('"Tail with a forklift…" on a one-crane long load sets the lift up and opens the steps', g.btn && g.added, JSON.stringify([g.btn, g.added]));
+      check('No script errors with the forklift lift', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();

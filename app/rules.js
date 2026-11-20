@@ -11,6 +11,8 @@ const RULES = [
   { id: "rig.dropMax", group: "Rigging", label: "Drops under a spreader – largest angle from vertical", value: 30, unit: "°", min: 0, max: 89, step: 1 },
   { id: "tt.top", group: "Tandem lifts", label: "Top and tail – the top crane is checked for at least", value: 100, unit: "% of the load (+ rigging)", min: 0, max: 100, step: 5 },
   { id: "tt.tail", group: "Tandem lifts", label: "Top and tail – the tailing crane is checked for at least", value: 75, unit: "% of the load (+ rigging)", min: 0, max: 100, step: 5 },
+  { id: "tt.fork", group: "Tandem lifts", label: "Top and tail – a tailing forklift is checked for at least", value: 75, unit: "% of the load", min: 0, max: 100, step: 5 },
+  { id: "fork.util", group: "Tandem lifts", label: "Forklift utilisation limit – load on the forks against its capacity at that load centre", value: 100, unit: "%", min: 1, max: 100, step: 1 },
   { id: "crane.util", group: "Cranes", label: "Crane utilisation limit – used unless the plan sets its own", value: 100, unit: "% of chart capacity", min: 1, max: 100, step: 1 },
   { id: "ground.manhole", group: "Ground", label: "Outrigger pads / tracks – keep clear of manholes and pits by", value: 1.0, unit: "m", min: 0, max: 20, step: 0.1 },
   { id: "ground.drain", group: "Ground", label: "Outrigger pads / tracks – warn within this distance of an underground drain", value: 1.5, unit: "m", min: 0, max: 20, step: 0.1 },
