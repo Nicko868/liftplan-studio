@@ -438,6 +438,18 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       check('"Tail with a forklift…" on a one-crane long load sets the lift up and opens the steps', g.btn && g.added, JSON.stringify([g.btn, g.added]));
       check('No script errors with the forklift lift', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
+    // ---------- 13. after the upend the load is turned and moved to its set point: that step gets a TOP VIEW of the move ----------
+    {
+      p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900);
+      const g = await p.evaluate(async () => {
+        openPlan(clone(SAMPLE_PLANS[0].plan)); const ld = plan.loads[0]; ld.set = { ...ld.pick, rot: (+ld.pick.rot || 0) + 90, x: ld.pick.x + 3, y: ld.pick.y + 2 }; renderAll();
+        const L = liftSteps(ld), mvIdx = L.steps.findIndex(s => lsPlanMove(L.steps[s.no - 2], s)), s = L.steps[mvIdx], txt = lsMoves(L.steps[s.no - 2], s).map(m => m.txt).join(' | ');
+        const sh = await buildSheets(), st = sh.filter(x => /lift_sequence.*stage_/.test(x.name)), withTop = st.filter(x => /TOP VIEW/.test(x.svg)).map(x => x.name);
+        return { mvName: s && s.name, upendSteps: L.steps.filter(q => q.tilt > 0 && q.tilt < 90).every(q => !lsPlanMove(L.steps[q.no - 2], q)), txt, withTop, turned: /TOP VIEW – load turned 90° clockwise/.test(st[mvIdx]?.svg || '') }; });
+      check('A load turned / moved to its set point after the upend: that stage gets a top view of the turn, the move and the slew, and the crane is told to turn the load', /set position/.test(g.mvName || '') && g.upendSteps && /turn the load 90° clockwise/.test(g.txt) && g.withTop.length === 1 && g.turned, JSON.stringify(g));
+      check('No script errors with the top view of a move', !p._errs.length, p._errs.slice(0, 3).join(' | '));
+    }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ date: new Date().toISOString(), file: FILE, results }, null, 1));

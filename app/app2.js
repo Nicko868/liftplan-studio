@@ -10,6 +10,7 @@ function siteScenesAll(phaseMode, all) { return all ? allSiteParts(phaseMode).ma
 function mergeScenes(list) { const s = new Scene(); list.forEach(x => s.items.push(...x.items)); return s; }
 async function siteSVGStatic(phaseMode, opts = {}) {
   const sc = mergeScenes(siteScenesAll(phaseMode, opts.all));
+  if (opts.extra) try { opts.extra(sc); } catch (e) { console.warn("plan overlay", e); }   // drawings added on top by the caller (e.g. a lift step's move)
   sc.items = sc.items.filter(it => !(it.L === "RADIUS" && it.t === "circle"));
   // the counterweight OPTIONS text from the crane library ("CW 160–180 t + ZB 60 t") is not the set-up – the crane data sheet gives the actual counterweight
   { const opts = new Set(plan.cranes.map(c => REG.cranes[c.model]?.up?.cwLabel).filter(Boolean).map(t => "CW " + t)); sc.items = sc.items.filter(it => !(it.t === "text" && opts.has(String(it.s)))); }   // the full circle round the crane (tail swing) stays in the app, not on the sheets

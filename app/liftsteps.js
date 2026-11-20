@@ -289,15 +289,48 @@ async function lsWith(L, s, fn) {
   }
 }
 // the plan of one step, framed on the lift
-async function lsPlanSVG(L, s, pxPerM = 20) {
+// what moved in plan from the step before: the load's travel and turn, each crane's slew
+function lsPlanMove(prev, s) {
+  if (!prev || Math.abs((+s.tilt || 0) - (+prev.tilt || 0)) > 0.5) return null;
+  let dRot = ((+s.pose.rot || 0) - (+prev.pose.rot || 0)); dRot = ((dRot + 540) % 360) - 180;
+  const dXY = Math.hypot(s.pose.x - prev.pose.x, s.pose.y - prev.pose.y), slews = [];
+  for (const q of s.per) { if (q.fork || q.rel) continue; const p = prev.per.find(x => x.c === q.c); if (!p || p.rel) continue; let dB = q.brg - p.brg; dB = ((dB + 540) % 360) - 180; if (Math.abs(dB) >= 0.5 || Math.abs(q.R - p.R) >= 0.1) slews.push({ q, p, dB, dR: q.R - p.R }); }
+  return Math.abs(dRot) >= 1 || dXY >= 0.2 || slews.some(x => Math.abs(x.dB) >= 0.5) ? { dRot, dXY, slews } : null;
+}
+// the move drawn on the plan: where the load was (dashed), its centre line then and now with the angle turned, its path, the slew of each crane
+function lsMoveOverlay(sc, L, prev, s, mv) {
+  const ld = L.ld, d = loadDims(ld), up = Math.abs(Math.cos((+s.tilt || 0) * D2R)) < 0.2, A = up ? Math.max(2, d.y * 1.6) : Math.max(2.2, Math.min(8, d.x * 0.6)), col = "#b42318", grey = "#566476", ts = 1.0;
+  const axis = (P, len) => { const u = rot2([1, 0], -(P.rot || 0)); return [[P.x - u[0] * len, P.y - u[1] * len], [P.x + u[0] * len, P.y + u[1] * len]]; };
+  // footprint: the outline (shortened as it turns up); standing up, its cross-section – round for a round load
+  const foot = (P, tilt) => { const k = Math.cos((+tilt || 0) * D2R), xc = +ld.cog || 0;
+    const loc = Math.abs(k) < 0.2 ? (/cyl|pipe|pile|spud|silo|tank/i.test(ld.kind || "") ? Array.from({ length: 24 }, (_, i) => [d.y / 2 * Math.cos(i * Math.PI / 12), d.y / 2 * Math.sin(i * Math.PI / 12)]) : [[-d.z / 2, -d.y / 2], [d.z / 2, -d.y / 2], [d.z / 2, d.y / 2], [-d.z / 2, d.y / 2]]) : loadOutline(ld).map(q => [xc + (q[0] - xc) * k, q[1]]);
+    return loc.map(q => { const r = rot2(q, -(P.rot || 0)); return [P.x + r[0], P.y + r[1]]; }); };
+  const arrow = (a, b, c, w = 1.6) => { const L0 = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, u = [(b[0] - a[0]) / L0, (b[1] - a[1]) / L0], n = [-u[1], u[0]], h = Math.min(0.9, L0 * 0.3);
+    sc.poly("DIMS", [[b[0] - u[0] * h + n[0] * h * 0.45, b[1] - u[1] * h + n[1] * h * 0.45], b, [b[0] - u[0] * h - n[0] * h * 0.45, b[1] - u[1] * h - n[1] * h * 0.45]], { w, color: c }); };
+  const arc = (c, r, b0, b1, colr, txt) => { const n = Math.max(6, Math.ceil(Math.abs(b1 - b0) / 4)), pts = Array.from({ length: n + 1 }, (_, i) => { const b = (b0 + (b1 - b0) * i / n) * D2R; return [c[0] + r * Math.sin(b), c[1] + r * Math.cos(b)]; });
+    sc.poly("DIMS", pts, { w: 1.6, color: colr }); arrow(pts[pts.length - 2], pts[pts.length - 1], colr); const bm = ((b0 + b1) / 2) * D2R; if (txt) sc.text("DIMS", [c[0] + (r + 1.6) * Math.sin(bm), c[1] + (r + 1.6) * Math.cos(bm)], txt, ts, { bold: true, color: colr }); };
+  // the load where it was, and its centre line then (dashed) and now
+  sc.poly("DIMS", foot(prev.pose, prev.tilt), { closed: true, w: 1.2, color: grey, dash: [0.4, 0.25] });
+  sc.poly("DIMS", foot(s.pose, s.tilt), { closed: true, w: 1.6, color: col });
+  sc.poly("DIMS", axis(prev.pose, A), { w: 1, color: grey, dash: [0.9, 0.3, 0.15, 0.3] });
+  sc.poly("DIMS", axis(s.pose, A), { w: 1.4, color: col, dash: [0.9, 0.3, 0.15, 0.3] });
+  if (Math.abs(mv.dRot) >= 1) { const b0 = bearingDeg(...rot2([1, 0], -(prev.pose.rot || 0))), b1 = b0 + mv.dRot; arc([s.pose.x, s.pose.y], A * 0.8, b0, b1, col, `${fx(Math.abs(mv.dRot), 0)}°`); }
+  if (mv.dXY >= 0.2) { const a = [prev.pose.x, prev.pose.y], b = [s.pose.x, s.pose.y]; sc.poly("DIMS", [a, b], { w: 1.6, color: col, dash: [0.6, 0.3] }); arrow(a, b, col); const nn = [-(b[1] - a[1]) / mv.dXY, (b[0] - a[0]) / mv.dXY]; sc.text("DIMS", [(a[0] + b[0]) / 2 + nn[0] * 1.4, (a[1] + b[1]) / 2 + nn[1] * 1.4], `${fx(mv.dXY, 1)} m`, ts, { bold: true, color: col }); }
+  for (const x of mv.slews) { const c = [x.q.c.x, x.q.c.y], r = Math.max(3, Math.min(x.p.R, x.q.R) * 0.55), cc = x.q.c.color || "#16202a";
+    sc.poly("DIMS", [c, [c[0] + x.p.R * Math.sin(x.p.brg * D2R), c[1] + x.p.R * Math.cos(x.p.brg * D2R)]], { w: 1, color: cc, dash: [0.5, 0.35] });   // the boom line before
+    if (Math.abs(x.dB) >= 0.5) arc(c, r, x.p.brg, x.q.brg, cc, `${fx(Math.abs(x.dB), 0)}°`); }
+}
+async function lsPlanSVG(L, s, pxPerM = 20, opt = {}) {
   return lsWith(L, s, async () => {
     // framed tight on this lift: the cranes (outriggers / tracks and tail swing), the load where it is and where it goes, the hooks
     const P = [];
     for (const c of L.cranes) { const C = REG.cranes[c.model], t = Math.max(C?.up?.tail || 0, (C?.car?.len || 12) * 0.62, 6) + 1; P.push([c.x - t, c.y - t], [c.x + t, c.y + t]); try { for (const pd of cranePads(c, C)) P.push(pd.w); } catch (e) { } }
-    for (const q of [s.pose, L.ld.set]) for (const o of loadOutline(L.ld)) { const r = rot2(o, -(q.rot || 0)); P.push([q.x + r[0], q.y + r[1]]); }
+    { const k = Math.cos((+s.tilt || 0) * D2R), xc = +L.ld.cog || 0, k0 = opt.prev ? Math.cos((+opt.prev.tilt || 0) * D2R) : k;   // the load as it is seen from above at this step
+      for (const [q, kk] of [[s.pose, k], [L.ld.set, k], ...(opt.prev ? [[opt.prev.pose, k0]] : [])]) for (const o of loadOutline(L.ld)) { const r = rot2([xc + (o[0] - xc) * kk, o[1]], -(q.rot || 0)); P.push([q.x + r[0], q.y + r[1]]); } }
     for (const q of s.per) { if (q.fork) { const F = q.F || L.F, u = q.u, v = [-u[1], u[0]]; for (const [kx, ky] of [[-F.l1 / 2, -F.b / 2], [F.l1 / 2, F.b / 2]]) P.push([q.ctr[0] + u[0] * kx + v[0] * ky, q.ctr[1] + u[1] * kx + v[1] * ky]); } else if (q.hook) P.push(q.hook); }
     let b = [Math.min(...P.map(p => p[0])), Math.min(...P.map(p => p[1])), Math.max(...P.map(p => p[0])), Math.max(...P.map(p => p[1]))]; const m = 1.5; b = [b[0] - m, b[1] - m - 2, b[2] + m, b[3] + m];
-    let svg = await siteSVGStatic("pick", { pxPerM, bounds: b });
+    const mv = opt.prev ? lsPlanMove(opt.prev, s) : null;
+    let svg = await siteSVGStatic("pick", { pxPerM, bounds: b, extra: mv ? sc => lsMoveOverlay(sc, L, opt.prev, s, mv) : null });
     if (L.ft) svg = svg.replace(/>PICK \(tip moved\) R /g, ">R ");   // the crane holds the top: its hook is over the lug, not moved off
     return svg.replace(/>PICK \(tip moved\) R /g, ">OFF THE HOOK · R ").replace(/>PICK R /g, ">R ").replace(/ · PICK</g, "<"); });
 }
@@ -359,6 +392,8 @@ function lsMoves(prev, s) {
     if (Math.abs(dz) >= 0.1) m.push(`${dz > 0 ? "hoist" : "lower"} ${fx(Math.abs(dz), 1)} m`);
     if (Math.abs(dR) >= 0.1) m.push(`${dR > 0 ? "luff out" : "luff in"} ${fx(Math.abs(dR), 1)} m (R ${fx(p.R, 1)} → ${fx(q.R, 1)})`);
     if (Math.abs(dB) >= 0.5) m.push(`slew ${fx(Math.abs(dB), 0)}° ${dB > 0 ? "clockwise" : "anticlockwise"}`);
+    { const on = s.per.filter(x => !x.fork && !x.rel); let dr = ((+s.pose.rot || 0) - (+prev.pose.rot || 0)); dr = ((dr + 540) % 360) - 180;
+      if (on.length === 1 && Math.abs(dr) >= 1 && Math.abs((+s.tilt || 0) - (+prev.tilt || 0)) < 0.5) m.push(`turn the load ${fx(Math.abs(dr), 0)}° ${dr > 0 ? "clockwise" : "anticlockwise"} on the hook (tag lines)`); }
     return { q, txt: m.length ? m.join(" · ") : "hold" }; });
 }
 // ---------------- the lift sequence sheets ----------------
@@ -498,8 +533,21 @@ async function lsStageSheet(L, s, liftLabel) {
   const ld = L.ld, nm = ld.name || "load", lim = L.lim, ucol = u => u == null ? "#566476" : u > lim ? "#b42318" : u > lim * 0.9 ? "#9a6200" : "#1d7a4f";
   const F = ssFrame(`LIFT SEQUENCE · ${nm} – STAGE ${s.no} of ${L.steps.length}: ${s.name.toUpperCase()}`, liftLabel), e = F.e, x0 = F.M + 4, tw = F.W - 2 * F.M - 8;
   const top = F.M + 76, stripH = 470, ph = F.bandY - top - stripH, pw = tw;
-  const cad = (plan.meta.seqStyle || "cad") === "cad" || !!L.ft, pic = cad ? await lsCadFront(L, s, Math.round(pw), Math.round(ph)) : await lsFrontPic(L, s, Math.round(pw), Math.round(ph));
-  if (pic) {
+  const cad = (plan.meta.seqStyle || "cad") === "cad" || !!L.ft, prev = L.steps[s.no - 2], mv = lsPlanMove(prev, s);
+  if (mv) {   // the load turns / travels or a crane slews: that only shows from above – TOP VIEW of the move, FRONT VIEW beside it
+    const tw2 = Math.round(pw * 0.58), fw = Math.round(pw - tw2), tp = await lsPlanSVG(L, s, 30, { prev });
+    F.add(`<rect x="${x0}" y="${top}" width="${tw2}" height="${ph}" fill="#ffffff"/>`); F.add(nestSVG(tp, x0 + 10, top + 64, tw2 - 20, ph - 74));
+    F.add(`<rect x="${x0}" y="${top}" width="${pw}" height="${ph}" fill="none" stroke="#16202a" stroke-width="2"/><line x1="${x0 + tw2}" y1="${top}" x2="${x0 + tw2}" y2="${top + ph}" stroke="#16202a" stroke-width="2"/>`);
+    const what = [Math.abs(mv.dRot) >= 1 ? `load turned ${fx(Math.abs(mv.dRot), 0)}° ${mv.dRot > 0 ? "clockwise" : "anticlockwise"}` : "", mv.dXY >= 0.2 ? `moved ${fx(mv.dXY, 1)} m` : "", ...mv.slews.filter(x => Math.abs(x.dB) >= 0.5).map(x => `${x.q.c.label || "crane"} slews ${fx(Math.abs(x.dB), 0)}°`)].filter(Boolean).join(" · ");
+    F.add(`<text x="${x0 + 24}" y="${top + 44}" font-size="30" font-weight="700" fill="#16202a" text-decoration="underline">${e(`TOP VIEW – ${what}`)}</text>`);
+    F.add(`<text x="${x0 + 24}" y="${top + 76}" font-size="20" fill="#3d4a57">${e("Dashed grey: where the load was at the step before · red: its centre line now, the turn and the path · each crane's slew from its boom line before")}</text>`);
+    const fp = await lsCadFront(L, s, fw, Math.round(ph));
+    if (fp) { F.add(`<g transform="translate(${x0 + tw2} ${top})">${fp.svg}</g>`); F.add(lsCallouts([...lsStageLabels(L, s, fp.proj), ...(fp.extra || [])], fp.occ, x0 + tw2, top, fw, ph, e));
+      F.add(`<text x="${x0 + tw2 + 24}" y="${top + 44}" font-size="30" font-weight="700" fill="#16202a" paint-order="stroke" stroke="#fff" stroke-width="6" text-decoration="underline">${e(`FRONT VIEW – load ${fx(s.h, 1)} m up`)}</text>`); }
+    F.add(`<rect x="${x0}" y="${top}" width="${pw}" height="${ph}" fill="none" stroke="#16202a" stroke-width="2"/><line x1="${x0 + tw2}" y1="${top}" x2="${x0 + tw2}" y2="${top + ph}" stroke="#16202a" stroke-width="2"/>`);
+  }
+  const pic = mv ? null : cad ? await lsCadFront(L, s, Math.round(pw), Math.round(ph)) : await lsFrontPic(L, s, Math.round(pw), Math.round(ph));
+  if (mv) { } else if (pic) {
     F.add(pic.url ? `<image href="${pic.url}" x="${x0}" y="${top}" width="${pw}" height="${ph}"/>` : `<g transform="translate(${x0} ${top})">${pic.svg}</g>`);
     F.add(lsCallouts([...lsStageLabels(L, s, pic.proj), ...(pic.extra || [])], pic.occ, x0, top, pw, ph, e));
     F.add(`<rect x="${x0}" y="${top}" width="${pw}" height="${ph}" fill="none" stroke="#16202a" stroke-width="2"/>`);
@@ -508,8 +556,8 @@ async function lsStageSheet(L, s, liftLabel) {
   // the strip: key plan, then for each crane what it does from the last stage and its checks
   const sy = F.bandY - stripH + 10, sh = stripH - 20, kpW = 760; F.add(`<line x1="${F.M}" y1="${sy - 10}" x2="${F.W - F.M}" y2="${sy - 10}" stroke="#16202a" stroke-width="3"/>`);
   const kp = await lsPlanSVG(L, s, 14); F.add(nestSVG(kp, x0 + 6, sy + 30, kpW - 20, sh - 34)); F.add(`<text x="${x0 + 14}" y="${sy + 24}" font-size="23" font-weight="700" fill="#16202a">KEY PLAN</text><line x1="${x0 + kpW}" y1="${sy - 10}" x2="${x0 + kpW}" y2="${F.bandY}" stroke="#16202a" stroke-width="2"/>`);
-  const mv = lsMoves(L.steps[s.no - 2], s), cw = (tw - kpW) / s.per.length;
-  mv.forEach(({ q, txt }, k) => { const cx = x0 + kpW + k * cw + 24; let y = sy + 30; if (k) F.add(`<line x1="${cx - 24}" y1="${sy - 10}" x2="${cx - 24}" y2="${F.bandY}" stroke="#9aa5b1" stroke-width="1.5"/>`);
+  const mvs = lsMoves(L.steps[s.no - 2], s), cw = (tw - kpW) / s.per.length;
+  mvs.forEach(({ q, txt }, k) => { const cx = x0 + kpW + k * cw + 24; let y = sy + 30; if (k) F.add(`<line x1="${cx - 24}" y1="${sy - 10}" x2="${cx - 24}" y2="${F.bandY}" stroke="#9aa5b1" stroke-width="1.5"/>`);
     F.add(`<text x="${cx}" y="${y}" font-size="30" font-weight="700" fill="${q.c.color || "#16202a"}">${e(q.fork ? (q.c.label || "Forklift") : `${q.c.label || "Crane"} · ${REG.cranes[q.c.model]?.name || q.c.model}`)}</text>`); y += 46;
     F.add(`<text x="${cx}" y="${y}" font-size="26" font-weight="700" fill="#16202a">${e(txt.charAt(0).toUpperCase() + txt.slice(1))}</text>`); y += 44;
     const rows = q.rel ? [] : q.fork ? [["Fork height (mast lift)", `${fx(q.forkH, 2)} m (${fx(q.h3, 2)} m)`], ["Load centre", `${fx(q.cl * 1000, 0)} mm`], ["Share on the forks", `${fx(q.geom, 2)} t`], ...(q.design > q.geom + 0.01 ? [[`Checked for (${q.dWhy})`, `${fx(q.design, 2)} t`]] : []),
