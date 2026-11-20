@@ -384,6 +384,22 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       check('No script errors in shared mode', !errs.length, errs.slice(0, 3).join(' | '));
       await ctx.close();
     }
+    // ---------- 10. sample plans: each opens from the start screen and produces its full sheet set ----------
+    {
+      p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900);
+      const n = await p.evaluate(() => SAMPLE_PLANS.length), got = [];
+      for (let i = 0; i < n; i++) {
+        await p.evaluate(() => { if (!$('dStart').open) openStart(false); }); await p.waitForTimeout(200);
+        await p.click('#stSamples'); await p.waitForTimeout(200); await p.click(`[data-smp="${i}"]`); await p.waitForTimeout(900);
+        got.push(await p.evaluate(async () => { const sh = await buildSheets(), L = plan.loads.map(l => liftSteps(l)).filter(Boolean)[0];
+          return { up: L && L.up, steps: L ? L.steps.length : 0, bad: L ? L.steps.filter(s => !s.ok).length : -1, sheets: sh.length, stages: sh.filter(s => /LIFT SEQUENCE/.test(s.svg)).length, ssb: sh.filter(s => /SSB/.test(s.svg)).length, saved: !dirty, open: !$('dSamples').open && !$('dStart').open }; }));
+        await p.evaluate(() => goHome()); await p.waitForTimeout(300);
+      }
+      if (n) await shot(p, '95_samples');
+      check('Sample plans: top and tail (2) and a moving tandem lift open from the start screen and give their full sheet sets', n >= 3 && got.filter(g => g.up).length >= 2 && got.some(g => !g.up) && got.every(g => g.steps >= 7 && g.bad === 0 && g.stages >= g.steps && g.ssb === 0 && g.saved && g.open), JSON.stringify(got));
+      check('No script errors with the samples', !p._errs.length, p._errs.slice(0, 3).join(' | '));
+    }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ date: new Date().toISOString(), file: FILE, results }, null, 1));

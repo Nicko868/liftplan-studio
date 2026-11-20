@@ -12,7 +12,7 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   later file must run on `window` "load", never `setTimeout`.
 - Run `node --check` on every changed `.js` file before building.
 - Diagnostics: `NODE_PATH=<global node_modules> node tests/diag.js` (Playwright + Chromium) – must stay all PASS
-  (72/72 since shared mode). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
+  (74/74 since sample plans). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
   the file with `?local` (browser-only mode); scenario 9 tests shared mode against a stand-in for Supabase.
 - Storage: all saving goes through `CAP.db` (collection / doc / onSnapshot).
   - Shared mode (default outside claude.ai): `app/cloud.js` – Supabase project `liftplan-studio`
@@ -30,6 +30,10 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
 - Never put job data, client data or a secret key in `index.html` (the repo is public). The only key allowed in it is the
   Supabase **publishable** key (it is public by design; the protection is the sign-in + table rules). Never the
   secret / service_role key. The Anthropic key is typed in by each user.
+
+- Sample plans: `app/samples.js` (SAMPLE_PLANS) – start screen → "Sample plans". Two top-and-tail upends (spud leg,
+  steel column) and one moving tandem lift (85 t transformer). Made-up data, built-in cranes only, no "SSB" anywhere.
+  Every new lift type gets a sample here (Nicko wants to see the expected output); diagnostic scenario 10 checks them.
 
 ## Standing rules from Nicko
 - Act as a developer thinking across the whole app: data-driven, app-wide, no one-off code. Don't just reorganise his words.
