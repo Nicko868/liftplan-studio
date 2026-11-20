@@ -82,8 +82,8 @@ function glTriangulate(P, n) {
   const c2 = P.map(p => new THREE.Vector2(p[i0], p[i1]));
   try { return THREE.ShapeUtils.triangulateShape(c2, []); } catch (e) { const T = []; for (let i = 1; i < P.length - 1; i++) T.push([0, i, i + 1]); return T; }
 }
-function glBuild(M) {
-  const root = GL.root;
+function glBuild(M, opt = {}) {
+  const root = GL.root, keepBounds = GL.bounds;
   for (const ch of [...root.children]) { root.remove(ch); ch.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && !o.material._keep) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose()); }); }
   const flats = {}, glass = new Map(), smooth = new Map();
   const flatOf = k => flats[k] || (flats[k] = { p: [], n: [], c: [] });
@@ -135,6 +135,7 @@ function glBuild(M) {
   } else GL.inst = null;
   if (bx0 > bx1) { bx0 = by0 = -20; bx1 = by1 = 20; bz0 = 0; bz1 = 10; }
   GL.bounds = [bx0, by0, Math.min(0, bz0), bx1, by1, bz1];
+  if (opt.movingOnly) { if (keepBounds) GL.bounds = keepBounds; GL.labels = M.labels.filter(l => l.text); return; }   // Play lift: only what moves – ground, site and the rest stay built
   // what the camera looks at: the lift (cranes, booms, loads); the whole site when there is no lift yet
   const H = (M.handles || []).map(h => h.p);
   // loads count too (with no crane yet, or Pick & Set shown together) – a big site picture must not pull the camera out to the whole drawing

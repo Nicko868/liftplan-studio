@@ -69,6 +69,8 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
 - Play lift (liftplay.js) plays a lift with steps step by step (wrappers installed on window "load"): interpolates between
   steps (`lsLerpStep`), draws through `lsEnter` (hooks at the step's R/slew, load tilted, forklift moved); caption = the
   step's per-machine instructions + live numbers. The plan is left exactly as it was.
+  Each Play frame rebuilds only what moves (faces from crane3D / load3D / rig3D / forklift3D are tagged `_mv`); the ground,
+  site picture and other scenery are built once per lift into `LP.still` (glBuild(M, {movingOnly:true}) skips the ground).
 - Load at set after an upend: `ld.set.tilt` (°; unset = automatic – top and tail sets it down at the upend angle, else level),
   load panel "Load at set". With it turned up: liftPointWorld(set) = the lift steps' final hooks (same radius as the step
   sheets), the tail crane is off the hook at set (share 0, hook where it let go, "SET – OFF THE HOOK"), plan footprint upright

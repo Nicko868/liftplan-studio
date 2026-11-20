@@ -79,7 +79,7 @@ function lpFrame(now) {
   lpApply(st); lpCamera(T, Math.min(t, T));
   const host = $("view3d"), r = host.getBoundingClientRect(), W = Math.max(300, Math.round(r.width)), H = Math.max(300, Math.round(r.height));
   try {
-    if (!LP.paused || !LP.built) { glBuild(buildMesh("pick")); LP.built = true; }
+    if (!LP.paused || !LP.built) { lpBuildFrame(); LP.built = true; }
     GL.focus = LP.focus.slice(); GL.sig = "";
     glCamera(W, H); GL.R.render(GL.scene, GL.cam); glLabels(host, W, H);
   } catch (e) { console.warn("play", e); return lpStop(); }
@@ -104,7 +104,22 @@ function lpBegin() {
   LP.focus = [Math.min(...P.map(p => p[0])) - 6, Math.min(...P.map(p => p[1])) - 6, 0, Math.max(...P.map(p => p[0])) + 6, Math.max(...P.map(p => p[1])) + 6, zMax];
   return true;
 }
+// Each frame only what moves is rebuilt (cranes, loads, rigging, a forklift on the lift, ropes, labels): the ground, the
+// site picture, buildings, mats and the rest are built once when the lift starts and kept. Rebuilding everything every
+// frame (ground textures included) held playback to a few frames a second.
+function lpBuildFrame() {
+  LP_TAG = true; let M; try { M = buildMesh("pick"); } finally { LP_TAG = false; }
+  if (!LP.still) { const Ms = { ...M, faces: M.faces.filter(f => !f._mv), lines: [], labels: [] }; glBuild(Ms);
+    LP.still = new THREE.Group(); for (const ch of [...GL.root.children]) { GL.root.remove(ch); LP.still.add(ch); } GL.root.parent.add(LP.still); }
+  glBuild({ ...M, faces: M.faces.filter(f => f._mv) }, { movingOnly: true });
+}
+function lpDropStill() { if (!LP.still) return; LP.still.parent && LP.still.parent.remove(LP.still); LP.still.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && !o.material._keep) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m._keepMap && m.map) m.map.dispose(); m.dispose(); }); }); LP.still = null; }
+// faces from the things that move are marked while a Play frame is built
+let LP_TAG = false;
+window.addEventListener("load", () => { for (const fn of ["crane3D", "load3D", "rig3D", "forklift3D"]) { const f = window[fn]; if (typeof f !== "function") continue;
+  window[fn] = function (M, ...a) { if (!LP_TAG) return f.call(this, M, ...a); const n0 = M.faces.length; try { return f.call(this, M, ...a); } finally { for (let i = n0; i < M.faces.length; i++) M.faces[i]._mv = true; } }; } });
 function lpEndLift() {
+  lpDropStill();
   if (!LP.steps) return;
   LP.steps.forEach(S => { S.ld.pick = S.save.pickRef; Object.assign(S.ld.pick, S.save.pick); });
   (LP.tips || []).forEach(([c, t]) => { c.tip = t; }); LP.tips = null;
@@ -129,7 +144,7 @@ function lpNextLift() {
 function lpStop() {
   if (!LP.on) return;
   LP.on = false; cancelAnimationFrame(LP.raf);
-  lpEndLift();
+  lpEndLift(); lpDropStill();
   plan.phase = LP.save.phase; Object.assign(V3, LP.save.v3);
   document.body.classList.remove("lpOn"); GL.sig = "";
   if (LP.all && plan.al !== LP.startAl) switchLift(LP.startAl);
