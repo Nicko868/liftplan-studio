@@ -12,7 +12,7 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   later file must run on `window` "load", never `setTimeout`.
 - Run `node --check` on every changed `.js` file before building.
 - Diagnostics: `NODE_PATH=<global node_modules> node tests/diag.js` (Playwright + Chromium) – must stay all PASS
-  (87/87 since Play lift plays the steps). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
+  (91/91 since checks follow the lift steps). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
   the file with `?local` (browser-only mode); scenario 9 tests shared mode against a stand-in for Supabase.
 - Storage: all saving goes through `CAP.db` (collection / doc / onSnapshot).
   - Shared mode (default outside claude.ai): `app/cloud.js` – Supabase project `liftplan-studio`
@@ -83,4 +83,11 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   load panel "Load at set". With it turned up: liftPointWorld(set) = the lift steps' final hooks (same radius as the step
   sheets), the tail crane is off the hook at set (share 0, hook where it let go, "SET – OFF THE HOOK"), plan footprint upright
   (round for round loads), travel ghosts and clash checks use that footprint, set elevations and 3D show it upright.
+- A crane on a lift with steps is checked through the lift along the steps (`liftSequence` wrapped in liftsteps.js: every
+  step plus ¼ ½ ¾ along each plan move) – not the plain pick→set straight line with the load level.
+- Sheets: a last pass (`lsSheetText`, buildSheets wrapper) drops "SSB " / "(SSB …)" from printed text; the user's own numbers
+  ("SSB-004") stay. Built-in rigging names carry no company mark. Global names must be unique across app/*.js – a clashing
+  top-level const stops the whole file loading (it happened with sheetClean; the full diagnostic run catches it).
+- Real-plan check (with Nicko signed in in the Claude browser panel): open each plan read-only, every lift: checks, steps,
+  buildSheets, script errors – no saving.
 - Known gaps: LTM 1230 / LTM 1130 charts not in the crane library yet; vessels have no hold model; a callout can still cross a sling line.

@@ -503,6 +503,21 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       check('Play lift plays the lift steps (cranes top and tail, crane + forklift): one move per step, upright by the end, plan untouched after', res.every(r => r.seq && r.n === r.steps + 1 && r.caps.every(Boolean) && r.tilt >= 89 && r.same && r.own && r.footer && r.still), JSON.stringify(res));
       check('No script errors while playing the lift steps', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
+    // ---------- 16. the crane's check through the lift follows the lift steps; sheets never print a company mark in equipment names ----------
+    {
+      p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900);
+      const g = await p.evaluate(async () => { openPlan(clone(SAMPLE_PLANS[0].plan)); const ld = plan.loads[0]; ld.set = { h: 0, x: -3, y: -24.85, rot: 90 }; ld.travelDir = 'ccw'; renderAll();
+        const S = craneSummary(plan.cranes[0]); const out = { noCap: S.warn.some(w => /no chart capacity/.test(w)), steps: !!S.seq?.steps, rows: S.seq?.rows.length || 0, way: (S.seq?.rows || []).filter(r => /on the way/.test(r.name)).length };
+        // a plan whose rigging still carries the old company-marked names, numbered by the user with the company prefix
+        const q = blankPlan(); q.name = 'SSB-099'; q.meta.lift = 'SSB-099 test'; openPlan(q); const l = { ...clone(LOAD_PRESETS.box), id: uid(), name: 'Box', weight: 10, pick: { x: 0, y: 0, rot: 0, h: 0 }, set: { x: 5, y: 0, rot: 0, h: 0 } }; plan.loads.push(l); normLoad(l);
+        addCraneOf('XCA230'); plan.cranes[0].attach = { load: l.id, point: 'C' }; plan.cranes[0].x = -12; ensureRig(l); const e = (l.rig.top || l.rig.leg || [])[0]; if (e) { e.snap = { ...(e.snap || {}), name: 'SSB sling set leg – Ø54 mm wire' }; } renderAll();
+        const sh = await buildSheets(), txt = sh.map(s => s.svg).join(' ');
+        out.mark = />[^<]*\bSSB [^<]*</.test(txt); out.own = /SSB-099/.test(txt); out.lib = Object.values(REG.rigging || {}).filter(x => /^SSB /.test(x.name || '')).length; return out; });
+      check('The crane\'s check through the lift follows the lift steps (each step and points along the swing) – no false "out of the chart"', !g.noCap && g.steps && g.rows >= 10 && g.way === 3, JSON.stringify(g));
+      check('Sheets never print a company mark in equipment names; the user\'s own plan numbers stay', !g.mark && g.own && g.lib === 0, JSON.stringify(g));
+      check('No script errors in the step-based checks', !p._errs.length, p._errs.slice(0, 3).join(' | '));
+    }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ date: new Date().toISOString(), file: FILE, results }, null, 1));

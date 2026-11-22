@@ -819,3 +819,29 @@ window.addEventListener("load", () => {   // Play lift (liftplay.js) loads after
 { const _lpr = lpReadout; lpReadout = function (st, ...a) { const C = LP.seqCur; if (!C || !st.S.seq) return _lpr.call(this, st, ...a);
     const s = C.s; return s.per.map(q => q.fork ? `${q.c.label || "Forklift"}: ${q.rel ? "clear" : `forks ${fx(q.forkH, 2)} m · ${fx(q.util, 0)} %`}` : `${q.c.label || "Crane"}: ${q.rel ? "off the hook" : `R ${fx(q.R, 1)} m · hook ${fx(q.z, 1)} m${q.util != null ? ` · ${fx(q.util, 0)} %` : ""}`}`).join("  |  ") + `  |  load ${s.tilt > 0.5 ? `turned up ${fx(s.tilt, 0)}°` : "level"}, bottom ${fx(s.h, 1)} m`; }; }
 });
+
+// ================= sheets: equipment names never print a company mark =================
+// Library items and the copies saved in plans may carry a company prefix ("SSB sling set leg …"). Nicko's rule: never
+// print "SSB" on sheets. A last pass over every sheet's text drops "SSB " / "(SSB …)" from names; the user's own plan
+// and lift numbers ("SSB-004") are left alone.
+const lsSheetText = t => t.replace(/\s*\(SSB [^)]*\)/g, "").replace(/\bSSB\s+(?=[A-Za-zØ0-9])/g, "");
+{ const _bs2 = buildSheets; buildSheets = async function (...a) { const sh = await _bs2.apply(this, a);
+    for (const s of sh || []) if (s && typeof s.svg === "string") s.svg = s.svg.replace(/>([^<]+)</g, (m, t) => ">" + lsSheetText(t) + "<");
+    return sh; }; }
+// ================= the crane's check through the lift follows the lift steps =================
+// A lift with steps (tandem, top and tail, crane + forklift) is checked along the path the steps take – each step, and
+// points along any slew or travel between them – not along a straight line from pick to set with the load lying flat.
+{ const _seq = liftSequence; liftSequence = function (cr, S) {
+    const ld = plan.loads.find(l => l.id === cr.attach?.load);
+    if (!ld || !(lsTwo(ld) || (Array.isArray(ld.steps) && ld.steps.length))) return _seq.call(this, cr, S);
+    const L = liftSteps(ld); if (!L || !S.C) return _seq.call(this, cr, S);
+    const rows = [], n = L.steps.length;
+    const row = (name, t, q) => { const ba = boomAngle(S.C, cr.L, q.R); rows.push({ name, t, R: q.R, ang: ba.ok ? ba.theta : null, cap: q.cap ?? null, rUsed: q.rUsed, util: q.util ?? null }); };
+    L.steps.forEach((s, i) => { const q = s.per.find(x => x.c === cr); if (!q || q.rel) return; const t = n > 1 ? i / (n - 1) : 0;
+      const prev = L.steps[i - 1], p = prev && prev.per.find(x => x.c === cr);
+      if (p && !p.rel && lsPlanMove(prev, s)) for (const u of [0.25, 0.5, 0.75]) { const m = lsLerpStep(prev, s, u).per.find(x => x.c === cr), k = lsChart(cr) ? craneCapacity(S.C, cr, lsChart(cr), m.R) : { cap: null };
+        row(`Step ${s.no} – on the way (${u * 100}%)`, t - (1 - u) / Math.max(1, n - 1), { R: m.R, cap: k.cap, rUsed: k.rUsed, util: k.cap ? q.hookLoad / k.cap * 100 : null }); }
+      row(`Step ${s.no} – ${s.name}`, t, q); });
+    if (!rows.length) return _seq.call(this, cr, S);
+    const mx = rows.reduce((m, r) => (r.util ?? -1) > (m.util ?? -1) ? r : m, rows[0]);
+    return { rows, mx, W: Math.max(...rows.map(r => r.util && r.cap ? r.util * r.cap / 100 : 0)), slew: 0, steps: true }; }; }

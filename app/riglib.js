@@ -30,10 +30,10 @@ const RIG_BUILTIN = [
   ...[[8, 0.8, 0.14], [11.2, 1.6, 0.17], [15, 2.9, 0.2], [22, 5.3, 0.24], [31.5, 9.5, 0.3]].map(([swl, kg, len]) => RG(`hk_${swl}`, "hook", `Eye sling hook G80 ${swl} t`, swl, kg / 1000, len)),
   ...[[10, 3, 0.25], [25, 6, 0.9], [50, 8, 1.8], [100, 10, 3.6], [200, 12, 7.5]].map(([swl, len, w]) => RG(`sb_${swl}_${len}`, "spreader", `Spreader beam ${swl} t × ${len} m`, swl, w, len)),
   // ---- SSB spreader bar SWL 50 t (ORSEN drawing ANX0077-000-STR-DRW-001 rev 03) and its rigging
-  RG("ssb_sb50", "spreader", "SSB spreader bar SWL 50 t – 7.0 m (ANX0077-000-STR-DRW-001 rev 03)", 50, 1.483, 7.0, {
+  RG("ssb_sb50", "spreader", "Spreader bar SWL 50 t – 7.0 m (ANX0077-000-STR-DRW-001 rev 03)", 50, 1.483, 7.0, {
     cert: "ANX0077-000-STR-DRW-001", notes: "ORSEN / SSB. CHS 273×12.5 S355, overall 7.0 m. Upper padeyes at 2.5 / 4.0 / 5.5 m (35 t WLL) and 6.515 m (50 t WLL, 55 t shackles); lower padeyes at 2.5 / 4.0 / 5.5 m (35 t) and 7.0 m ends (50 t). Sling angle max 30° from vertical. Bar + 6 shackles 1638 kg; bar alone ≈ 1483 kg. Forklift pockets for empty handling only. Painted yellow." }),
-  RG("ssb_ss54", "sling_wire", "SSB sling set leg – Ø54 mm wire Gr.1960 (set WLL 52.68 t, checked at 26.34 t per leg)", 26.34, 0, 0, { wpm: 0.0117, cert: "ANX0077-000-STR-DRW-001 item 14", notes: "2-leg sling set to NF EN 13414-1 & 13414-1/A1, set WLL 52.68 t. Checked here at half the set WLL per leg (conservative). Leg 5.739 m (6.446 m incl. quad assembly). Max 30° to vertical." }),
-  RG("ssb_quad67", "masterlink", "Quad master link assembly WLL 67 t (SSB sling set)", 67, 0.1, 0.482, { notes: "Top of the SSB Ø54 sling set – 482 mm assembly. Weight estimated – check the certificate." }),
+  RG("ssb_ss54", "sling_wire", "Sling set leg – Ø54 mm wire Gr.1960 (set WLL 52.68 t, checked at 26.34 t per leg)", 26.34, 0, 0, { wpm: 0.0117, cert: "ANX0077-000-STR-DRW-001 item 14", notes: "2-leg sling set to NF EN 13414-1 & 13414-1/A1, set WLL 52.68 t. Checked here at half the set WLL per leg (conservative). Leg 5.739 m (6.446 m incl. quad assembly). Max 30° to vertical." }),
+  RG("ssb_quad67", "masterlink", "Quad master link assembly WLL 67 t (for the Ø54 mm sling set)", 67, 0.1, 0.482, { notes: "Top of the SSB Ø54 sling set – 482 mm assembly. Weight estimated – check the certificate." }),
   RG("gp4163_55", "shackle", "Green Pin G-4163 bow shackle 55 t", 55, 0.0396, 0.3, { notes: "Upper end padeyes of the SSB 50 t spreader bar (case D)." }),
   RG("gp4163_35", "shackle", "Green Pin G-4163 bow shackle 35 t", 35, 0.0188, 0.24, { notes: "Upper padeyes cases A–C and all lower padeyes of the SSB 50 t spreader bar." }),
   // ---- extended catalogue
@@ -433,7 +433,7 @@ const RIG_PRESETS = [
   { id: "rh_tub", name: "Ramshorn – tubulars / heavy (2-leg)", block: "ramshorn", desc: "2 master links · 2 shackles · load link · shackle · 2-leg chain sling – tubulars or heavy loads", arr: "bridle2",
     top: W => [["masterlink", W / 2, null, 0, 2], ["shackle", W / 2, std, 0, 2], ["other", W, i => /Load link/.test(i.name)], ["shackle", W, std]], leg: W => [["sling_chain", W / 2 * 1.3, null, 4], ["hook", W / 2 * 1.3, i => /Self-locking/.test(i.name)]] },
   { id: "sb", name: "Spreader beam – 2 + 2 slings", block: "any", desc: "Master link · top slings · spreader beam · lower slings · shackles", arr: "spreader" },
-  { id: "ssb50", name: "SSB 50 t spreader bar (ANX0077)", block: "any", desc: "Quad assembly 67 t · Ø54 mm wire 2-leg set 5.739 m · G-4163 shackles · 7 m spreader bar SWL 50 t – set the padeye spacings in the list", arr: "spreader",
+  { id: "ssb50", name: "50 t spreader bar set (ANX0077)", block: "any", desc: "Quad assembly 67 t · Ø54 mm wire 2-leg set 5.739 m · G-4163 shackles · 7 m spreader bar SWL 50 t – set the padeye spacings in the list", arr: "spreader",
     build: ld => {
       const bar = rigItem("ssb_sb50"), W = Math.max(1, +ld.weight || 10), lowSl = pickItem("sling_wire", W / 2 * 1.25);
       return { arr: "spreader", share4: 3, top: [rigEntry(rigItem("ssb_quad67"))], leg: [rigEntry(rigItem("ssb_ss54"), { len: 5.739 }), rigEntry(rigItem("gp4163_35"))],
