@@ -229,8 +229,11 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       check('No script errors in import / Claude link', !p._errs.length, p._errs.slice(0, 3).join(' | '));
       await p.close();
     }
-    // ---------- 6b. the real SSB Dakar plan (Herbosh-Kier / Geotec, marked S/E, aerial photo under the lines, colour legend) ----------
-    const SSB = path.join(__dirname, 'fixtures', 'ssb_dakar.pdf');
+    // ---------- 6b. a real site survey (scale from containers, aerial photo under the lines, colour legend) ----------
+    // Real drawings are never kept in the public repo: put ssb_dakar.pdf in tests/fixtures-private/ (git-ignored) or point
+    // LP_PRIVATE_FIXTURES at the folder holding it. Without it these checks are skipped (and said so).
+    const SSB = path.join(process.env.LP_PRIVATE_FIXTURES || path.join(__dirname, 'fixtures-private'), 'ssb_dakar.pdf');
+    if (!fs.existsSync(SSB)) console.log('SKIP the real-survey import checks (6b): no private copy of ssb_dakar.pdf');
     if (fs.existsSync(SSB)) {
       p = await fresh(); await newPlan(p, 'SSB check');
       await p.evaluate(() => openSiteImport()); await p.setInputFiles('#siFile', SSB); await p.waitForSelector('#siGo', { timeout: 30000 }); await p.click('#siGo'); await p.waitForTimeout(6000);

@@ -2,3 +2,5 @@ libs/node_modules/
 out/
 diag_out/
 *.map
+# real client / site drawings for the diagnostics – never in the public repo
+tests/fixtures-private/

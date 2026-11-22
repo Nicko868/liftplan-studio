@@ -27,6 +27,9 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
     The table needs `grant select, insert, update, delete on public.liftplan_docs to authenticated;` (new Supabase
     projects don't grant it automatically). Database errors are shown to the user (dbError in cloud.js), never swallowed.
   - Version shown on the sign-in screen and in Account: build.sh stamps the build date/time into LP_VERSION.
+- Real client / site drawings used by the diagnostics live in `tests/fixtures-private/` (git-ignored) or the folder in
+  `LP_PRIVATE_FIXTURES` – never in the repo (the SSB Dakar survey was purged from the history on 22 Nov 2026; Nicko's copy is in
+  his OneDrive Apps folder, inside liftplan-studio.bundle / LiftPlan_source.zip). Without it, check 6b is skipped.
 - Never put job data, client data or a secret key in `index.html` (the repo is public). The only key allowed in it is the
   Supabase **publishable** key (it is public by design; the protection is the sign-in + table rules). Never the
   secret / service_role key. The Anthropic key is typed in by each user.
