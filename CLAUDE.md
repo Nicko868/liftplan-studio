@@ -11,6 +11,10 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   functions with the pattern `{ const _f = f; f = function (...a) { ... } }`. A wrapper that needs a function from a
   later file must run on `window` "load", never `setTimeout`.
 - Run `node --check` on every changed `.js` file before building.
+- Golden-output test (for any clean-up / refactor): `node tests/golden.js <old build.html> /tmp/g_before`, then
+  `node tests/golden.js out/LiftPlan_Studio.html /tmp/g_after /tmp/g_before` – must say 0 differences (step numbers, crane
+  checks, every sheet's text and picture, 3D model at pick / set and Play frames). Build the old version from git HEAD in a copy.
+  Real plans: push the new build as `next.html` first, compare in the browser panel with the live index.html, then replace.
 - Diagnostics: `NODE_PATH=<global node_modules> node tests/diag.js` (Playwright + Chromium) – must stay all PASS
   (91/91 since checks follow the lift steps). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
   the file with `?local` (browser-only mode); scenario 9 tests shared mode against a stand-in for Supabase.
@@ -47,7 +51,12 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
 - No "TBC"/"placeholder" wording in item names. Calculators complement the app, they don't dominate it.
 - Show the expected output (sample plans / exported sheets) when a feature is built.
 
-## Lift sequence feature (app/liftsteps.js)
+## Lift sequence feature
+- Files (build order): `liftsteps.js` engine (steps, checks, crane checks along the steps) → `liftstepsui.js` checks panel /
+  steps dialog → `liftstepsdraw.js` step drawings, stage sheets, sheet text cleaner (LS_DRAW, LS_SET declared here) →
+  `liftset.js` load at set + the single load3D / rig3D / loadRigHeight / evalCrane wrappers → `liftstepsplay.js` Play.
+- One wrapper per function per file group: add to the existing wrapper, don't stack a second one. Drawing state is
+  LS_DRAW (a step being drawn / played) and LS_SET {plan, foot, el, ph, rel, guard} (load at set) – no new globals.
 - Every load on two cranes is checked step by step (radius, slew, boom angle, hook height vs most, load share,
   design share, chart capacity, use, clearance under the load). Steps are data on the load (`ld.steps`, automatic until edited).
 - Top and tail: stages 0/15/30/45/60/75/90°, tail released at vertical; design shares from Rules `tt.top` (100 %) and `tt.tail` (75 %).

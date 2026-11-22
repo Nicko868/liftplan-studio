@@ -1110,7 +1110,7 @@ const LOCAL = (() => {
 // as in browser mode (CAP.local). Everything sits in one table, liftplan_docs (path = "<collection>/<id>", jsonb data);
 // only signed-in staff can read or write it (row level security). "?local" in the address = this browser only.
 // The publishable key below is meant to be public – the protection is the sign-in plus the table rules.
-const LP_VERSION = "2026-11-22 16:19 UTC";   // stamped by build.sh: build date + time (UTC)
+const LP_VERSION = "2026-11-22 16:43 UTC";   // stamped by build.sh: build date + time (UTC)
 const SB_CONFIG = { url: "https://zsdacfyuongmebpdltcw.supabase.co", key: "sb_publishable_ChUe-Mj-_ikynWd5ce57HA_humJSbm4", table: "liftplan_docs" };
 const CLOUD = (() => {
   if (typeof LOCAL === "undefined" || !LOCAL || !window.supabase || /[?&]local\b/.test(location.search)) return null;
@@ -14951,6 +14951,27 @@ function lsFTSteps(ld, cranes, fo) {
     } catch (e) { console.warn(e); }
     return S; }; }
 
+// ================= the crane's check through the lift follows the lift steps =================
+// A lift with steps (tandem, top and tail, crane + forklift) is checked along the path the steps take – each step, and
+// points along any slew or travel between them – not along a straight line from pick to set with the load lying flat.
+{ const _seq = liftSequence; liftSequence = function (cr, S) {
+    const ld = plan.loads.find(l => l.id === cr.attach?.load);
+    if (!ld || !(lsTwo(ld) || (Array.isArray(ld.steps) && ld.steps.length))) return _seq.call(this, cr, S);
+    const L = liftSteps(ld); if (!L || !S.C) return _seq.call(this, cr, S);
+    const rows = [], n = L.steps.length;
+    const row = (name, t, q) => { const ba = boomAngle(S.C, cr.L, q.R); rows.push({ name, t, R: q.R, ang: ba.ok ? ba.theta : null, cap: q.cap ?? null, rUsed: q.rUsed, util: q.util ?? null }); };
+    L.steps.forEach((s, i) => { const q = s.per.find(x => x.c === cr); if (!q || q.rel) return; const t = n > 1 ? i / (n - 1) : 0;
+      const prev = L.steps[i - 1], p = prev && prev.per.find(x => x.c === cr);
+      if (p && !p.rel && lsPlanMove(prev, s)) for (const u of [0.25, 0.5, 0.75]) { const m = lsLerpStep(prev, s, u).per.find(x => x.c === cr), k = lsChart(cr) ? craneCapacity(S.C, cr, lsChart(cr), m.R) : { cap: null };
+        row(`Step ${s.no} – on the way (${u * 100}%)`, t - (1 - u) / Math.max(1, n - 1), { R: m.R, cap: k.cap, rUsed: k.rUsed, util: k.cap ? q.hookLoad / k.cap * 100 : null }); }
+      row(`Step ${s.no} – ${s.name}`, t, q); });
+    if (!rows.length) return _seq.call(this, cr, S);
+    const mx = rows.reduce((m, r) => (r.util ?? -1) > (m.util ?? -1) ? r : m, rows[0]);
+    return { rows, mx, W: Math.max(...rows.map(r => r.util && r.cap ? r.util * r.cap / 100 : 0)), slew: 0, steps: true }; }; }
+
+</script>
+<script>
+
 // ---------------- the steps on the checks panel ----------------
 function lsTableHTML(L, opt = {}) {
   const lim = L.lim, cls = u => u == null ? "" : u > 100 ? "bad" : u > lim ? "bad" : u > lim * 0.9 ? "amber" : "ok";
@@ -15051,14 +15072,27 @@ function lsForkPanelWire(L) {
   $("lfAtt").onchange = () => { f.attW = Math.max(0, +$("lfAtt").value || 0); upd(); };
   $("lfDel").onclick = () => { plan.obstacles = plan.obstacles.filter(x => x !== o); delete L.ld.steps; markDirty(); renderAll(); renderLs(); };
 }
+
+</script>
+<script>
 // ================= each step drawn with the app's own engineering drawings =================
 // The plan and the elevations of a step are the same drawings as the plan sheet (cranes with their outriggers / tracks,
 // counterweight, boom slewed and luffed to the hook, rigging, the load and the site), with the lift put in that step's
 // position for the moment it is drawn: the load where the step has it, turned up as far as the step says, the cranes
 // on it as they are at that step, and a crane that is off the hook shown with its hook clear of the load.
-let LS_DRAW = null;   // { ld, tilt } while a step is being drawn
-{ const _lp = loadPlan; loadPlan = function (ld, ...a) { const s = _lp.call(this, ld, ...a);
-    try { const D0 = LS_DRAW || LS_SETPLAN; if (!D0 || D0.ld !== ld || !D0.tilt) return s; const k = Math.cos(D0.tilt * D2R), xc = D0.xc || 0, f = p => [xc + (p[0] - xc) * k, p[1]];
+let LS_DRAW = null;   // { ld, tilt, xc } while a step is drawn or played ({ d3, L, s, evCr } too while it is drawn in 3D)
+// the load at its set position (liftset.js): plan / foot = its plan and travel ghosts drawn standing up, el = a crane's
+// elevation at set, ph = the phase the 3D view is being built for, rel / guard = the tail crane off the hook at set
+const LS_SET = { plan: null, foot: null, el: null, ph: null, rel: null, guard: false };
+// the load's plan when it is turned up (at a step, or standing at set): shortened along its length – and near vertical
+// what is seen from above is its cross-section (round for a round load) with the centre marked
+{ const _lp = loadPlan; loadPlan = function (ld, ...a) { const s = _lp.call(this, ld, ...a), D = LS_DRAW || LS_SET.plan; if (!D || D.ld !== ld || !D.tilt) return s;
+    if (Math.abs(Math.cos(D.tilt * D2R)) < 0.2) {
+    const st = s.items.find(it => it.t === "poly" && it.closed) || {}, d = loadDims(ld), xc = D.xc || 0, o = new Scene(), round = /cyl|pipe|pile|spud|silo|tank|reel/i.test(ld.kind || "");
+    if (round) o.circle("LOAD", [xc, 0], d.y / 2, { fill: st.fill, color: st.color, w: st.w }); else o.poly("LOAD", [[xc - d.z / 2, -d.y / 2], [xc + d.z / 2, -d.y / 2], [xc + d.z / 2, d.y / 2], [xc - d.z / 2, d.y / 2]], { closed: true, fill: st.fill, color: st.color, w: st.w });
+    const r = Math.max(d.y, 0.6) * 0.7; o.poly("LOAD", [[xc - r, 0], [xc + r, 0]], { w: 0.8, color: st.color || "#34393f" }); o.poly("LOAD", [[xc, -r], [xc, r]], { w: 0.8, color: st.color || "#34393f" });
+      return o; }
+    try { const k = Math.cos(D.tilt * D2R), xc = D.xc || 0, f = p => [xc + (p[0] - xc) * k, p[1]];
       const o = new Scene(); for (const it of s.items) { if (it.t === "poly") o.items.push({ ...it, pts: it.pts.map(f) }); else if (it.t === "circle") o.items.push({ ...it, c: f(it.c) }); else o.items.push({ ...it, p: f(it.p) }); } return o; } catch (e) { return s; } }; }
 // put the lift in one step's state for drawing (load where the step has it, turned up, cranes and forklift as they are);
 // lsEnter returns the function that puts everything back. lsWith wraps a drawing in it.
@@ -15185,7 +15219,7 @@ function lsElevLoad(D, hookY) {
   let mu = -Infinity; for (const it of o.items) { if (it.t === "poly") for (const p of it.pts) mu = Math.max(mu, p[0]); else if (it.t === "circle") mu = Math.max(mu, it.c[0] + it.r); } D.maxU = mu;
   return { s: o, bottom: Number.isFinite(bottom) ? bottom : h0 };
 }
-{ const _lsr = loadSideRig; loadSideRig = function (ld, hookY, ...a) { const D = LS_DRAW || LS_SETEL; if (D && D.ld === ld && D.cur && D.s) { try { return lsElevLoad(D, hookY); } catch (e) { console.warn(e); } } return _lsr.call(this, ld, hookY, ...a); }; }
+{ const _lsr = loadSideRig; loadSideRig = function (ld, hookY, ...a) { const D = LS_DRAW || LS_SET.el; if (D && D.ld === ld && D.cur && D.s) { try { return lsElevLoad(D, hookY); } catch (e) { console.warn(e); } } return _lsr.call(this, ld, hookY, ...a); }; }
 
 // the height column of an elevation sits just clear of the drawing (it is set for the whole load length otherwise)
 function lsTidyElev(sc, maxU) {
@@ -15274,6 +15308,7 @@ async function withLiftA(i, fn) { syncLift(); const pc = plan.cranes, pl = plan.
 { const _bs = buildSheets; buildSheets = async function (...a) { const out = await _bs.apply(this, a);
     try { for (let i = 0; i < plan.lifts.length; i++) await withLiftA(i, async Lf => { for (const ld of Lf.loads) { if (!lsTwo(ld) && !(Array.isArray(ld.steps) && ld.steps.length)) continue;
           for (const sh of await liftSeqSheets(ld, Lf.name)) out.push({ ...sh, name: `${sh.name}_${i + 1}`, regen: () => sh.svg }); } }); } catch (e) { console.warn("lift sequence sheets", e); }
+    for (const s of out || []) if (s && typeof s.svg === "string") s.svg = s.svg.replace(/>([^<]+)</g, (m, t) => ">" + lsSheetText(t) + "<");   // see lsSheetText
     return out; }; }
 
 // ================= top and tail: each stage as one large front view of both cranes and the load =================
@@ -15288,25 +15323,6 @@ function lsLugsWorld(L, s) {
   else { const sp = tandemSpan(ld) || 0, zl = typeof liftPointZ === "function" ? liftPointZ(ld) : d.z; lugs = [[-sp / 2, 0, zl], [sp / 2, 0, zl]]; }
   return lugs.map(p => { const v = rot2([p[0], p[1]], -(P.rot || 0)); return [P.x + v[0], P.y + v[1], h0 + p[2]]; });
 }
-// the load turned up in 3D (about its CoG, lowest point on the load's bottom height – as the rigging works it out)
-{ const _l3 = load3D; load3D = function (M, ld, pos, ghost) {
-    const D = LS_DRAW; if (!D || !D.d3 || D.ld !== ld || ghost || !D.s || !D.s.tilt || !(lsBuild2(ld) || D.L?.ft)) return _l3.call(this, M, ld, pos, ghost);
-    const T = new Mesh(); _l3.call(this, T, ld, pos, ghost); const TT = D.L?.ft ? tiltFn(ld, { tilt: D.s.tilt }) : tiltFn(ld, ld.rig), P = D.s.pose, h0 = +pos.h || 0;
-    const f = w => { const v = rot2([w[0] - P.x, w[1] - P.y], P.rot || 0), q = TT([v[0], v[1], w[2] - h0]), r = rot2([q[0], q[1]], -(P.rot || 0)); return [P.x + r[0], P.y + r[1], h0 + q[2]]; };
-    for (const fc of T.faces) M.faces.push({ ...fc, pts: fc.pts.map(f) }); for (const l of T.lines) M.lines.push({ ...l, a: f(l.a), b: f(l.b) }); for (const l of T.labels) M.labels.push({ ...l, p: l.p ? f(l.p) : l.p });
-  }; }
-// the rigging at the stage: each crane's hook straight to its lug (shackle at the padeye / choke round the leg)
-{ const _r3 = rig3D; rig3D = function (M, ld, pos, res, hooks) {
-    const D = LS_DRAW; if (!D || !D.d3 || D.ld !== ld) return _r3.call(this, M, ld, pos, res, hooks);
-    const L = D.L, s = D.s, lugs = lsLugsWorld(L, s), d = loadDims(ld);
-    L.cranes.forEach(c => { const q = s.per.find(x => x.c === c); if (!q || q.rel) return; const i = c.attach?.point === "B" ? 1 : 0, lug = lugs[i], hk = [q.hook[0], q.hook[1], Math.min(q.z, q.hMax ?? q.z)];
-      M.line(hk, lug, "#0b7a66", 2.2); M.cyl(vadd(lug, [0, 0, -0.12]), vadd(lug, [0, 0, 0.32]), Math.max(0.12, d.y * 0.12), "#d9661f"); });
-  }; }
-// each crane's hook block at the stage's height
-{ const _ev = evalCrane; evalCrane = function (cr, ...a) { const r = _ev.call(this, cr, ...a); if (LS_DRAW && LS_DRAW.d3) LS_DRAW.evCr = cr; return r; }; }
-{ const _rh = loadRigHeight; loadRigHeight = function (ld, ...a) { const D = LS_DRAW;
-    if (D && D.d3 && D.ld === ld && D.evCr && D.s) { const q = D.s.per.find(x => x.c === D.evCr); if (q) return (q.rel ? D.s.h + 4 : q.z) - (+ld.pick.h || 0); }
-    return _rh.call(this, ld, ...a); }; }
 // the picture: W × H px, looking across the load at the cranes
 async function lsFrontPic(L, s, W, H) {
   if (typeof glAvailable !== "function" || !glAvailable()) return null;
@@ -15480,6 +15496,15 @@ async function lsCadFront(L, s, W, H) {
   });
 }
 
+// ================= sheets: equipment names never print a company mark =================
+// Library items and the copies saved in plans may carry a company prefix ("SSB sling set leg …"). Nicko's rule: never
+// print "SSB" on sheets. A last pass over every sheet's text drops "SSB " / "(SSB …)" from names; the user's own plan
+// (applied in the buildSheets wrapper above, after the step sheets are added)
+// and lift numbers ("SSB-004") are left alone.
+const lsSheetText = t => t.replace(/\s*\(SSB [^)]*\)/g, "").replace(/\bSSB\s+(?=[A-Za-zØ0-9])/g, "");
+
+</script>
+<script>
 // ================= the load at its set position after an upend: standing up, not lying flat =================
 // ld.set.tilt = how far the load is turned up where it is set (°). Not set = automatic: a top-and-tail lift sets the load
 // down at the angle it was upended to (90° = vertical), anything else level. With the load turned up at set:
@@ -15488,53 +15513,61 @@ async function lsCadFront(L, s, W, H) {
 //  · the tail crane is off the hook at set (it let go at vertical): it carries nothing there, its hook left where it let go;
 //  · the plan shows the load's footprint standing up (round for a round load) and the 3D view shows it upright.
 function lsSetTilt(ld) { const v = ld?.set?.tilt; if (v != null && v !== "") return Math.max(0, Math.min(90, +v || 0)); try { return lsUpend(ld) ? Math.max(15, Math.min(90, +(ld.upend?.to ?? 90) || 90)) : 0; } catch (e) { return 0; } }
-let LS_SETREL = null, LS_SETGUARD = false, LS_PH = null, LS_SETEL = null, LS_UPFOOT = null, LS_SETPLAN = null;
 const lsTailCrane = ld => { const cr = lsCranes(ld); return cr.length === 2 && lsBuild2(ld) ? cr.find(c => (c.attach?.point || "C") === "B") || null : null; };
 { const _lpw = liftPointWorld; liftPointWorld = function (load, point, phase) {
     if (phase !== "set" || LS_DRAW || !load) return _lpw.call(this, load, point, phase);
     const t = lsSetTilt(load); if (t < 0.5) return _lpw.call(this, load, point, phase);
-    if (!LS_SETGUARD && lsUpend(load)) { LS_SETGUARD = true; try { const L = liftSteps(load), st = L && L.steps[L.steps.length - 1], q = st && st.per.find(x => !x.fork && (x.c.attach?.point || "C") === point); if (q && q.hook) return [q.hook[0], q.hook[1]]; } catch (e) { } finally { LS_SETGUARD = false; } }
+    if (!LS_SET.guard && lsUpend(load)) { LS_SET.guard = true; try { const L = liftSteps(load), st = L && L.steps[L.steps.length - 1], q = st && st.per.find(x => !x.fork && (x.c.attach?.point || "C") === point); if (q && q.hook) return [q.hook[0], q.hook[1]]; } catch (e) { } finally { LS_SET.guard = false; } }
     const pos = load.set, sp = tandemSpan(load), xc = +load.cog || 0, off = point === "A" ? -sp / 2 : point === "B" ? sp / 2 : xc, o2 = xc + (off - xc) * Math.cos(t * D2R), v = rot2([o2, 0], -(pos.rot || 0));
     return [pos.x + v[0], pos.y + v[1]]; }; }
 { const _ls = loadShares; loadShares = function (load, att, ...a) { const r = _ls.call(this, load, att, ...a);
-    if (!LS_SETREL || LS_SETREL.ld !== load || !Array.isArray(att)) return r; const i = att.findIndex(x => x.id === LS_SETREL.tail); if (i < 0) return r;
+    if (!LS_SET.rel || LS_SET.rel.ld !== load || !Array.isArray(att)) return r; const i = att.findIndex(x => x.id === LS_SET.rel.tail); if (i < 0) return r;
     const tot = r.reduce((s, v) => s + (+v || 0), 0), n = att.length - 1; return r.map((v, k) => k === i ? 0 : n ? tot / n : v); }; }
-{ const _ec = evalCrane; evalCrane = function (cr, phase, ...a) {
-    if (phase !== "set" || LS_DRAW || LS_SETGUARD) return _ec.call(this, cr, phase, ...a);
-    const ld = plan.loads.find(l => l.id === cr.attach?.load); if (!ld || lsSetTilt(ld) < 89.5 || !lsUpend(ld)) return _ec.call(this, cr, phase, ...a);
-    const tail = lsTailCrane(ld); if (!tail) return _ec.call(this, cr, phase, ...a);
+{ const _ev = evalCrane; evalCrane = function (cr, phase, ...a) {
+    const ev = () => { const r = _ev.call(this, cr, phase, ...a); if (LS_DRAW && LS_DRAW.d3) LS_DRAW.evCr = cr; return r; };   // a step drawn in 3D: its hook height (loadRigHeight)
+    if (phase !== "set" || LS_DRAW || LS_SET.guard) return ev();
+    const ld = plan.loads.find(l => l.id === cr.attach?.load); if (!ld || lsSetTilt(ld) < 89.5 || !lsUpend(ld)) return ev();
+    const tail = lsTailCrane(ld); if (!tail) return ev();
     const keepTip = tail.tip; let rel = null;
-    if (!(tail.tip && tail.tip.set && tail.tip.set.free)) { LS_SETGUARD = true; try { const L = liftSteps(ld), st = L && [...L.steps].reverse().find(s => s.per.some(q => q.c === tail && q.rel)), q = st && st.per.find(x => x.c === tail); if (q) rel = { free: true, R: q.R, brg: q.brg }; } catch (e) { } finally { LS_SETGUARD = false; } }
-    LS_SETREL = { ld, tail: tail.id }; if (rel) tail.tip = { ...(tail.tip || {}), set: rel };
-    try { const out = _ec.call(this, cr, phase, ...a); if (cr === tail) { out.released = true; out.warn = out.warn.filter(w => !/moved off the load/.test(w)); } return out; }
-    finally { LS_SETREL = null; if (rel) tail.tip = keepTip; } }; }
+    if (!(tail.tip && tail.tip.set && tail.tip.set.free)) { LS_SET.guard = true; try { const L = liftSteps(ld), st = L && [...L.steps].reverse().find(s => s.per.some(q => q.c === tail && q.rel)), q = st && st.per.find(x => x.c === tail); if (q) rel = { free: true, R: q.R, brg: q.brg }; } catch (e) { } finally { LS_SET.guard = false; } }
+    LS_SET.rel = { ld, tail: tail.id }; if (rel) tail.tip = { ...(tail.tip || {}), set: rel };
+    try { const out = ev(); if (cr === tail) { out.released = true; out.warn = out.warn.filter(w => !/moved off the load/.test(w)); } return out; }
+    finally { LS_SET.rel = null; if (rel) tail.tip = keepTip; } }; }
 // plan: the footprint of the load as it stands at set (and at a turned-up lift step)
 { const _ls2 = loadScene; loadScene = function (ld, phase, ...a) { if (phase !== "set" || LS_DRAW) return _ls2.call(this, ld, phase, ...a); const t = lsSetTilt(ld); if (t < 0.5) return _ls2.call(this, ld, phase, ...a);
-    const keep = LS_SETPLAN; LS_SETPLAN = { ld, tilt: t, xc: +ld.cog || 0 }; let sc; try { sc = _ls2.call(this, ld, phase, ...a); } finally { LS_SETPLAN = keep; }
+    const keep = LS_SET.plan; LS_SET.plan = { ld, tilt: t, xc: +ld.cog || 0 }; let sc; try { sc = _ls2.call(this, ld, phase, ...a); } finally { LS_SET.plan = keep; }
     // standing up: the name just clear of the footprint, the top lifting point (A) where the hook is, no tail point (it is at the bottom)
     const d = loadDims(ld), pos = ld.set, k = Math.cos(t * D2R), half = Math.abs(k) < 0.2 ? d.y / 2 : Math.max(d.y / 2, d.x / 2 * Math.abs(k)), nm = String(ld.name || "");
     let row = 0; sc.items = sc.items.filter(it => !(it.t === "text" && it.L === "RIGGING" && it.s === "B"));
     const away = [pos.x - (ld.pick?.x ?? pos.x), pos.y - (ld.pick?.y ?? pos.y)], al = Math.hypot(...away), u = al > 0.3 ? [away[0] / al, away[1] / al] : [0, 1], up = u[1] >= 0 ? 1 : -1;   // on the side away from the pick
     for (const it of sc.items) if (it.t === "text" && it.L === "TEXT" && nm && (String(it.s).includes(nm) || row)) { it.p = [pos.x + u[0] * (half + 2.2), pos.y + u[1] * (half + 2.2) + up * row * 0.95]; it.rot = 0; it.size = Math.min(it.size || 0.7, 0.7); row++; }
     return sc; }; }
-{ const _lp2 = loadPlan; loadPlan = function (ld, ...a) { const D = LS_DRAW || LS_SETPLAN; if (!D || D.ld !== ld || !D.tilt || Math.abs(Math.cos(D.tilt * D2R)) >= 0.2) return _lp2.call(this, ld, ...a);
-    // standing up (near vertical): what is seen from above is its cross-section – round for a round load – with the centre marked
-    const base = _lp2.call(this, ld, ...a), st = base.items.find(it => it.t === "poly" && it.closed) || {}, d = loadDims(ld), xc = D.xc || 0, s = new Scene(), round = /cyl|pipe|pile|spud|silo|tank|reel/i.test(ld.kind || "");
-    if (round) s.circle("LOAD", [xc, 0], d.y / 2, { fill: st.fill, color: st.color, w: st.w }); else s.poly("LOAD", [[xc - d.z / 2, -d.y / 2], [xc + d.z / 2, -d.y / 2], [xc + d.z / 2, d.y / 2], [xc - d.z / 2, d.y / 2]], { closed: true, fill: st.fill, color: st.color, w: st.w });
-    const r = Math.max(d.y, 0.6) * 0.7; s.poly("LOAD", [[xc - r, 0], [xc + r, 0]], { w: 0.8, color: st.color || "#34393f" }); s.poly("LOAD", [[xc, -r], [xc, r]], { w: 0.8, color: st.color || "#34393f" });
-    return s; }; }
-// 3D: upright at set, the hooks above its top lifting point
-{ const _b3 = buildMesh; buildMesh = function (phase, ...a) { const k = LS_PH; LS_PH = phase; try { return _b3.call(this, phase, ...a); } finally { LS_PH = k; } }; }
-{ const _l3s = load3D; load3D = function (M, ld, pos, ghost) {
-    if (LS_DRAW || pos !== ld.set) return _l3s.call(this, M, ld, pos, ghost); const t = lsSetTilt(ld); if (t < 0.5) return _l3s.call(this, M, ld, pos, ghost);
-    const T = new Mesh(); _l3s.call(this, T, ld, pos, ghost); const TT = tiltFn(ld, { tilt: t }), P = pos, h0 = +pos.h || 0;
+// ---------------- 3D: the load turned up – at a lift step being drawn / played, or standing at its set position ----------------
+// lsTilt3D says how the load is turned (about its CoG, lowest point on the load's bottom height – as the rigging works it
+// out) and where: a step drawn in 3D uses the step's tilt and pose; otherwise the set position uses the set tilt.
+function lsTilt3D(ld, pos, ghost) { const D = LS_DRAW;
+  if (D) return D.d3 && D.ld === ld && !ghost && D.s && D.s.tilt && (lsBuild2(ld) || D.L?.ft) ? { TT: D.L?.ft ? tiltFn(ld, { tilt: D.s.tilt }) : tiltFn(ld, ld.rig), P: D.s.pose } : null;
+  if (pos !== ld.set) return null; const t = lsSetTilt(ld); return t < 0.5 ? null : { TT: tiltFn(ld, { tilt: t }), P: pos }; }
+{ const _l3 = load3D; load3D = function (M, ld, pos, ghost) { const X = lsTilt3D(ld, pos, ghost); if (!X) return _l3.call(this, M, ld, pos, ghost);
+    const T = new Mesh(); _l3.call(this, T, ld, pos, ghost); const { TT, P } = X, h0 = +pos.h || 0;
     const f = w => { const v = rot2([w[0] - P.x, w[1] - P.y], P.rot || 0), q = TT([v[0], v[1], w[2] - h0]), r = rot2([q[0], q[1]], -(P.rot || 0)); return [P.x + r[0], P.y + r[1], h0 + q[2]]; };
     for (const fc of T.faces) M.faces.push({ ...fc, pts: fc.pts.map(f) }); for (const l of T.lines) M.lines.push({ ...l, a: f(l.a), b: f(l.b) }); for (const l of T.labels) M.labels.push({ ...l, p: l.p ? f(l.p) : l.p }); }; }
-{ const _r3s = rig3D; rig3D = function (M, ld, pos, res, hooks) {
-    if (LS_DRAW || pos !== ld.set || lsSetTilt(ld) < 0.5) return _r3s.call(this, M, ld, pos, res, hooks);
+// the rigging: at a step each crane's hook straight to its lug (shackle at the padeye / choke round the leg);
+// standing at set the hooks to its top lifting point
+{ const _r3 = rig3D; rig3D = function (M, ld, pos, res, hooks) { const D = LS_DRAW;
+    if (D) { if (!D.d3 || D.ld !== ld) return _r3.call(this, M, ld, pos, res, hooks);
+      const L = D.L, s = D.s, lugs = lsLugsWorld(L, s), d = loadDims(ld);
+      L.cranes.forEach(c => { const q = s.per.find(x => x.c === c); if (!q || q.rel) return; const i = c.attach?.point === "B" ? 1 : 0, lug = lugs[i], hk = [q.hook[0], q.hook[1], Math.min(q.z, q.hMax ?? q.z)];
+        M.line(hk, lug, "#0b7a66", 2.2); M.cyl(vadd(lug, [0, 0, -0.12]), vadd(lug, [0, 0, 0.32]), Math.max(0.12, d.y * 0.12), "#d9661f"); });
+      return; }
+    if (pos !== ld.set || lsSetTilt(ld) < 0.5) return _r3.call(this, M, ld, pos, res, hooks);
     const t = lsSetTilt(ld), TT = tiltFn(ld, { tilt: t }), sp = tandemSpan(ld), lug = TT([-sp / 2, 0, liftPointZ(ld)]), v = rot2([lug[0], lug[1]], -(pos.rot || 0)), L = [pos.x + v[0], pos.y + v[1], (+pos.h || 0) + lug[2]];
     for (const h of hooks || []) M.line(h, L, "#0b7a66", 2); }; }
-{ const _rh2 = loadRigHeight; loadRigHeight = function (ld, ...a) { if (LS_PH !== "set" || LS_DRAW || !ld) return _rh2.call(this, ld, ...a); const t = lsSetTilt(ld); if (t < 0.5) return _rh2.call(this, ld, ...a);
+// each crane's hook block: at a step at the step's hook height (evalCrane notes which crane is being drawn); at set over
+// the top lifting point of the load standing up
+{ const _rh = loadRigHeight; loadRigHeight = function (ld, ...a) { const D = LS_DRAW;
+    if (D) { if (D.d3 && D.ld === ld && D.evCr && D.s) { const q = D.s.per.find(x => x.c === D.evCr); if (q) return (q.rel ? D.s.h + 4 : q.z) - (+ld.pick.h || 0); } return _rh.call(this, ld, ...a); }
+    if (LS_SET.ph !== "set" || !ld) return _rh.call(this, ld, ...a); const t = lsSetTilt(ld); if (t < 0.5) return _rh.call(this, ld, ...a);
     const sp = tandemSpan(ld), zl = liftPointZ(ld), lug = tiltFn(ld, { tilt: t })([-sp / 2, 0, zl]), rh = ld.rig?.arr ? (+ld.tandemRig || 2) + zl : (+ld.tandemRig || 0) + zl; return lug[2] + (rh - zl); }; }
 // the load panel: how the load stands at its set position
 { const _rp = renderProps; renderProps = function (...a) { const r = _rp.apply(this, a);
@@ -15545,27 +15578,30 @@ const lsTailCrane = ld => { const cr = lsCranes(ld); return cr.length === 2 && l
     return r; }; }
 
 // travel ghosts (and what the load passes over on the way) use the footprint of the load standing up
-{ const _lo = loadOutline; loadOutline = function (ld, ...a) { const U = LS_UPFOOT; if (!U || U.ld !== ld) return _lo.call(this, ld, ...a);
+{ const _lo = loadOutline; loadOutline = function (ld, ...a) { const U = LS_SET.foot; if (!U || U.ld !== ld) return _lo.call(this, ld, ...a);
     const d = loadDims(ld), xc = +ld.cog || 0, k = Math.cos(U.tilt * D2R);
     if (Math.abs(k) >= 0.2) return _lo.call(this, ld, ...a).map(q => [xc + (q[0] - xc) * k, q[1]]);
     return /cyl|pipe|pile|spud|silo|tank|reel/i.test(ld.kind || "") ? Array.from({ length: 20 }, (_, i) => [xc + d.y / 2 * Math.cos(i * Math.PI / 10), d.y / 2 * Math.sin(i * Math.PI / 10)]) : [[xc - d.z / 2, -d.y / 2], [xc + d.z / 2, -d.y / 2], [xc + d.z / 2, d.y / 2], [xc - d.z / 2, d.y / 2]]; }; }
 { const _ts = travelScene; travelScene = function (ld, tp, ...a) { if (LS_DRAW || !ld || !lsUpend(ld)) return _ts.call(this, ld, tp, ...a); const t = lsSetTilt(ld); if (t < 0.5) return _ts.call(this, ld, tp, ...a);
-    const k = LS_UPFOOT; LS_UPFOOT = { ld, tilt: t }; try { return _ts.call(this, ld, tp, ...a); } finally { LS_UPFOOT = k; } }; }
+    const k = LS_SET.foot; LS_SET.foot = { ld, tilt: t }; try { return _ts.call(this, ld, tp, ...a); } finally { LS_SET.foot = k; } }; }
 // each crane's elevation at set: the load standing up, the hook over its top lifting point, the tail crane off the hook
 { const _es = elevScene; elevScene = function (cr, phase, ...a) {
     const ld = phase === "set" && !LS_DRAW ? plan.loads.find(l => l.id === cr.attach?.load) : null, t = ld ? lsSetTilt(ld) : 0;
     if (!ld || t < 0.5) return _es.call(this, cr, phase, ...a);
     const cranes = lsCranes(ld), rh = (+ld.tandemRig || 0), sp = tandemSpan(ld), lugTop = tiltFn(ld, { tilt: t })([-sp / 2, 0, liftPointZ(ld)])[2], h0 = +ld.set.h || 0;
     const per = cranes.map(c => { const e = evalCrane(c, "set"); return { c, R: e.R, brg: e.bearing, hook: e.hook, z: h0 + lugTop + rh, rel: !!e.released }; });
-    const keepPh = LS_PH; LS_PH = "set"; LS_SETEL = { ld, L: { ld, cranes }, s: { pose: ld.set, h: h0, tilt: t, per }, cur: { cr, q: per.find(x => x.c === cr) } };
+    const keepPh = LS_SET.ph; LS_SET.ph = "set"; LS_SET.el = { ld, L: { ld, cranes }, s: { pose: ld.set, h: h0, tilt: t, per }, cur: { cr, q: per.find(x => x.c === cr) } };
     try { const r = _es.call(this, cr, phase, ...a); if (r && r.scene && per.find(x => x.c === cr)?.rel) for (const it of r.scene.items) if (it.t === "text") it.s = String(it.s).replace(/ · SET$/, " · SET – OFF THE HOOK"); return r; }
-    finally { LS_SETEL = null; LS_PH = keepPh; } }; }
+    finally { LS_SET.el = null; LS_SET.ph = keepPh; } }; }
 
 // a crane that let go at vertical is marked off the hook at set (not "tip moved")
 { const _hl = hookLine; hookLine = function (s, cr, ev, ...a) { const r = _hl.call(this, s, cr, ev, ...a);
     if (ev && ev.released) for (const it of s.items) if (it.t === "text" && /^SET \(tip moved\) R /.test(String(it.s))) it.s = String(it.s).replace("SET (tip moved)", "SET – OFF THE HOOK ·");
     return r; }; }
 
+
+</script>
+<script>
 // ================= Play lift: a lift with steps plays its steps =================
 // A tandem lift, a top and tail (cranes or crane + forklift) or a lift you gave steps to plays step by step in 3D: the load
 // turning up stage by stage, every crane luffing / slewing / hoisting to the step's hook, the tail crane lowering off or the
@@ -15586,6 +15622,12 @@ function lsLerpStep0(a, b, u) {
     return { ...q, R, brg, z: L(p.z, q.z), hook: [c.x + R * Math.sin(brg * D2R), c.y + R * Math.cos(brg * D2R)], rel: q.rel && u > 0.6 ? true : p.rel && u < 0.4 ? true : false, util: u < 0.5 ? p.util : q.util, hookLoad: u < 0.5 ? p.hookLoad : q.hookLoad, cap: u < 0.5 ? p.cap : q.cap }; });
   return s;
 }
+// the 3D model: notes which phase it is built for (the load standing at set – liftset.js) and, while a lift with steps
+// plays, puts the lift in the played moment (lsEnter: load, tilt, hooks, forklift) for the build and back afterwards
+{ const _bm = buildMesh; buildMesh = function (phase, ...a) { const k = LS_SET.ph; LS_SET.ph = phase; let leave = null;
+    try { const C = typeof LP !== "undefined" && LP.on ? LP.seqCur : null;
+      if (C && !LS_DRAW) { leave = lsEnter(C.L, C.s, { hooksFree: true }); Object.assign(LS_DRAW, { d3: true, L: C.L, s: C.s }); }
+      return _bm.call(this, phase, ...a); } finally { if (leave) leave(); LS_SET.ph = k; } }; }
 window.addEventListener("load", () => {   // Play lift (liftplay.js) loads after this file
 { const _lps = lpSteps; lpSteps = function (...a) { const out = _lps.apply(this, a);
     for (const S of out) { const ld = S.ld; if (!lsTwo(ld) && !(Array.isArray(ld.steps) && ld.steps.length)) continue; const L = liftSteps(ld); if (!L || L.steps.length < 2) continue;
@@ -15601,37 +15643,10 @@ window.addEventListener("load", () => {   // Play lift (liftplay.js) loads after
 { const _lpa = lpApply; lpApply = function (st, ...a) { _lpa.call(this, st, ...a); LP.seqCur = null;
     for (const S of LP.steps || []) if (S.seq && S.save) Object.assign(S.ld.pick, S.save.pick);   // a lift with steps is drawn from its steps – its pick stays as planned
     if (st && st.S && st.S.seq && st.ph.k === "seq") { const L = st.S.seq, A = L.steps[st.ph.a], B = L.steps[st.ph.b]; LP.seqCur = { L, s: lsLerpStep(A, B, lpEase(st.u)) }; } }; }
-{ const _bm = buildMesh; buildMesh = function (phase, ...a) { const C = typeof LP !== "undefined" && LP.on ? LP.seqCur : null; if (!C || LS_DRAW) return _bm.call(this, phase, ...a);
-    const leave = lsEnter(C.L, C.s, { hooksFree: true }); LS_DRAW.d3 = true; LS_DRAW.L = C.L; LS_DRAW.s = C.s; try { return _bm.call(this, phase, ...a); } finally { leave(); } }; }
 { const _lpr = lpReadout; lpReadout = function (st, ...a) { const C = LP.seqCur; if (!C || !st.S.seq) return _lpr.call(this, st, ...a);
     const s = C.s; return s.per.map(q => q.fork ? `${q.c.label || "Forklift"}: ${q.rel ? "clear" : `forks ${fx(q.forkH, 2)} m · ${fx(q.util, 0)} %`}` : `${q.c.label || "Crane"}: ${q.rel ? "off the hook" : `R ${fx(q.R, 1)} m · hook ${fx(q.z, 1)} m${q.util != null ? ` · ${fx(q.util, 0)} %` : ""}`}`).join("  |  ") + `  |  load ${s.tilt > 0.5 ? `turned up ${fx(s.tilt, 0)}°` : "level"}, bottom ${fx(s.h, 1)} m`; }; }
 });
 
-// ================= sheets: equipment names never print a company mark =================
-// Library items and the copies saved in plans may carry a company prefix ("SSB sling set leg …"). Nicko's rule: never
-// print "SSB" on sheets. A last pass over every sheet's text drops "SSB " / "(SSB …)" from names; the user's own plan
-// and lift numbers ("SSB-004") are left alone.
-const lsSheetText = t => t.replace(/\s*\(SSB [^)]*\)/g, "").replace(/\bSSB\s+(?=[A-Za-zØ0-9])/g, "");
-{ const _bs2 = buildSheets; buildSheets = async function (...a) { const sh = await _bs2.apply(this, a);
-    for (const s of sh || []) if (s && typeof s.svg === "string") s.svg = s.svg.replace(/>([^<]+)</g, (m, t) => ">" + lsSheetText(t) + "<");
-    return sh; }; }
-// ================= the crane's check through the lift follows the lift steps =================
-// A lift with steps (tandem, top and tail, crane + forklift) is checked along the path the steps take – each step, and
-// points along any slew or travel between them – not along a straight line from pick to set with the load lying flat.
-{ const _seq = liftSequence; liftSequence = function (cr, S) {
-    const ld = plan.loads.find(l => l.id === cr.attach?.load);
-    if (!ld || !(lsTwo(ld) || (Array.isArray(ld.steps) && ld.steps.length))) return _seq.call(this, cr, S);
-    const L = liftSteps(ld); if (!L || !S.C) return _seq.call(this, cr, S);
-    const rows = [], n = L.steps.length;
-    const row = (name, t, q) => { const ba = boomAngle(S.C, cr.L, q.R); rows.push({ name, t, R: q.R, ang: ba.ok ? ba.theta : null, cap: q.cap ?? null, rUsed: q.rUsed, util: q.util ?? null }); };
-    L.steps.forEach((s, i) => { const q = s.per.find(x => x.c === cr); if (!q || q.rel) return; const t = n > 1 ? i / (n - 1) : 0;
-      const prev = L.steps[i - 1], p = prev && prev.per.find(x => x.c === cr);
-      if (p && !p.rel && lsPlanMove(prev, s)) for (const u of [0.25, 0.5, 0.75]) { const m = lsLerpStep(prev, s, u).per.find(x => x.c === cr), k = lsChart(cr) ? craneCapacity(S.C, cr, lsChart(cr), m.R) : { cap: null };
-        row(`Step ${s.no} – on the way (${u * 100}%)`, t - (1 - u) / Math.max(1, n - 1), { R: m.R, cap: k.cap, rUsed: k.rUsed, util: k.cap ? q.hookLoad / k.cap * 100 : null }); }
-      row(`Step ${s.no} – ${s.name}`, t, q); });
-    if (!rows.length) return _seq.call(this, cr, S);
-    const mx = rows.reduce((m, r) => (r.util ?? -1) > (m.util ?? -1) ? r : m, rows[0]);
-    return { rows, mx, W: Math.max(...rows.map(r => r.util && r.cap ? r.util * r.cap / 100 : 0)), slew: 0, steps: true }; }; }
 
 </script>
 <script>
