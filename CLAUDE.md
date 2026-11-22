@@ -74,8 +74,8 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   step's per-machine instructions + live numbers. The plan is left exactly as it was.
   Play builds the still scenery once per lift into `LP.still` (plan.obstacles except a forklift on the lift; mats chosen with
   the real cranes – shownMatIds is pinned) and each frame rebuilds the cranes with hooks / ropes, loads, rigging and the forklift
-  (glBuild(M, {movingOnly:true}) skips the ground). The caption is a footer bar across the bottom of the 3D view; controls
-  top right; the camera is lifted clear of the footer. Slews follow the load's "Travel from pick to set" (ld.travelDir,
+  (glBuild(M, {movingOnly:true}) skips the ground). The caption is a footer bar across the bottom of the 3D view (`lpFitBox` pins the
+  overlay to #view3d's rectangle each frame, any window size); controls top right; the camera is lifted clear of the footer. Slews follow the load's "Travel from pick to set" (ld.travelDir,
   `lsSlewDelta`) in the steps, top view and Play.
 - LS_CACHE results are only reused for the same load / crane objects (`lsCacheOk`): a reopened plan or a switched lift has
   new objects with the same ids – reusing an old result drew / played the old objects and nothing on screen moved.

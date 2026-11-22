@@ -1110,7 +1110,7 @@ const LOCAL = (() => {
 // as in browser mode (CAP.local). Everything sits in one table, liftplan_docs (path = "<collection>/<id>", jsonb data);
 // only signed-in staff can read or write it (row level security). "?local" in the address = this browser only.
 // The publishable key below is meant to be public – the protection is the sign-in plus the table rules.
-const LP_VERSION = "2026-11-22 16:13 UTC";   // stamped by build.sh: build date + time (UTC)
+const LP_VERSION = "2026-11-22 16:19 UTC";   // stamped by build.sh: build date + time (UTC)
 const SB_CONFIG = { url: "https://zsdacfyuongmebpdltcw.supabase.co", key: "sb_publishable_ChUe-Mj-_ikynWd5ce57HA_humJSbm4", table: "liftplan_docs" };
 const CLOUD = (() => {
   if (typeof LOCAL === "undefined" || !LOCAL || !window.supabase || /[?&]local\b/.test(location.search)) return null;
@@ -17789,6 +17789,7 @@ function lpFrame(now) {
   const host = $("view3d"), r = host.getBoundingClientRect(), W = Math.max(300, Math.round(r.width)), H = Math.max(300, Math.round(r.height));
   try {
     if (!LP.paused || !LP.built) { lpBuildFrame(); LP.built = true; }
+    lpFitBox();
     GL.focus = LP.focus.slice(); GL.sig = "";
     glCamera(W, H); GL.R.render(GL.scene, GL.cam); glLabels(host, W, H);
   } catch (e) { console.warn("play", e); return lpStop(); }
@@ -17828,6 +17829,11 @@ function lpBuildFrame() {
   let M; const MS = shownMatIds(), sm = shownMatIds; shownMatIds = () => MS; plan.obstacles = O.filter(lpMoves); try { M = buildMesh("pick"); } finally { plan.obstacles = O; shownMatIds = sm; }
   GL.bounds = LP.stillBounds; glBuild({ ...M, lines: [...M.lines, ...(LP.stillLines || [])], labels: [...M.labels, ...(LP.stillLabels || [])] }, { movingOnly: true });
 }
+// the controls and the footer caption cover exactly the 3D view (not the toolbars above it), at any window size
+function lpFitBox() { const box = $("lpBox"), v = $("view3d"); if (!box || !v) return;
+  if (!LP.on) { box.style.top = box.style.left = box.style.width = box.style.height = ""; return; }
+  const pr = box.offsetParent ? box.offsetParent.getBoundingClientRect() : { left: 0, top: 0 }, r = v.getBoundingClientRect();
+  Object.assign(box.style, { top: `${r.top - pr.top}px`, left: `${r.left - pr.left}px`, width: `${r.width}px`, height: `${r.height}px`, right: "auto", bottom: "auto" }); }
 function lpDropStill() { if (!LP.still) return; LP.still.parent && LP.still.parent.remove(LP.still); LP.still.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && !o.material._keep) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if (!m._keepMap && m.map) m.map.dispose(); m.dispose(); }); }); LP.still = null; LP.stillLines = LP.stillLabels = null; }
 function lpEndLift() {
   lpDropStill();
@@ -17859,7 +17865,7 @@ function lpStop() {
   plan.phase = LP.save.phase; Object.assign(V3, LP.save.v3);
   document.body.classList.remove("lpOn"); GL.sig = "";
   if (LP.all && plan.al !== LP.startAl) switchLift(LP.startAl);
-  lpUi(); renderAll(); if (V3.mode !== "top") render3D();
+  lpUi(); lpFitBox(); renderAll(); if (V3.mode !== "top") render3D();
 }
 function lpUi() {
   const sec = $("view3d")?.parentElement; if (!sec) return;
@@ -17888,7 +17894,7 @@ function lpUi() {
 #lpCap .lpStep{font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.7}#lpCap .lpTxt{font-size:16px;font-weight:600;margin:2px 0 4px;line-height:1.3}
 #lpCap .lpRead{font:12px var(--mono, monospace);opacity:.85}#lpCap .lpBar{height:3px;background:rgba(255,255,255,.18);border-radius:2px;margin-top:8px;overflow:hidden}#lpCap .lpBar i{display:block;height:100%;background:#f0a04b}
 body.lpOn #view3d{pointer-events:none}body.lpOn #hint{display:none}
-body.lpOn #lpBox{left:0;right:0;top:0;bottom:0;max-width:none;align-items:stretch;justify-content:space-between;gap:0;padding:10px 12px 0}
+body.lpOn #lpBox{box-sizing:border-box;max-width:none;align-items:stretch;justify-content:space-between;gap:0;padding:10px 12px 0}
 body.lpOn #lpCtl{align-self:flex-end}
 body.lpOn #lpCap{border-radius:0;margin:0 -12px;width:auto;padding:7px 16px 9px;display:grid;grid-template-columns:auto 1fr;column-gap:14px;align-items:baseline;position:relative;box-shadow:0 -2px 12px rgba(0,0,0,.18)}
 body.lpOn #lpCap .lpStep{grid-row:1/3;white-space:nowrap;align-self:center}body.lpOn #lpCap .lpTxt{font-size:14px;margin:0}body.lpOn #lpCap .lpRead{font-size:11.5px}
