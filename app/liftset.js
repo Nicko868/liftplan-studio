@@ -58,7 +58,8 @@ function lsTilt3D(ld, pos, ghost) { const D = LS_DRAW;
     for (const h of hooks || []) M.line(h, L, "#0b7a66", 2); }; }
 // each crane's hook block: at a step at the step's hook height (evalCrane notes which crane is being drawn); at set over
 // the top lifting point of the load standing up
-{ const _rh = loadRigHeight; loadRigHeight = function (ld, ...a) { const D = LS_DRAW;
+// (a top and tail with a forklift has no bridle: the crane's hook is on the top lug like a tandem lift – loadSideRig too)
+{ const _rh = loadRigHeight; loadRigHeight = function (ld, ...a) { const D = LS_DRAW; if (ld && !a[0] && !(ld.rig && ld.rig.arr) && lsFT(ld)) a = [true, ...a.slice(1)];
     if (D) { if (D.d3 && D.ld === ld && D.evCr && D.s) { const q = D.s.per.find(x => x.c === D.evCr); if (q) return (q.rel ? D.s.h + 4 : q.z) - (+ld.pick.h || 0); } return _rh.call(this, ld, ...a); }
     if (LS_SET.ph !== "set" || !ld) return _rh.call(this, ld, ...a); const t = lsSetTilt(ld); if (t < 0.5) return _rh.call(this, ld, ...a);
     const sp = tandemSpan(ld), zl = liftPointZ(ld), lug = tiltFn(ld, { tilt: t })([-sp / 2, 0, zl]), rh = ld.rig?.arr ? (+ld.tandemRig || 2) + zl : (+ld.tandemRig || 0) + zl; return lug[2] + (rh - zl); }; }
@@ -75,7 +76,10 @@ function lsTilt3D(ld, pos, ghost) { const D = LS_DRAW;
     const d = loadDims(ld), xc = +ld.cog || 0, k = Math.cos(U.tilt * D2R);
     if (Math.abs(k) >= 0.2) return _lo.call(this, ld, ...a).map(q => [xc + (q[0] - xc) * k, q[1]]);
     return /cyl|pipe|pile|spud|silo|tank|reel/i.test(ld.kind || "") ? Array.from({ length: 20 }, (_, i) => [xc + d.y / 2 * Math.cos(i * Math.PI / 10), d.y / 2 * Math.sin(i * Math.PI / 10)]) : [[xc - d.z / 2, -d.y / 2], [xc + d.z / 2, -d.y / 2], [xc + d.z / 2, d.y / 2], [xc - d.z / 2, d.y / 2]]; }; }
+// the travel on the plan for an upend: ghosts standing up; and none at all when the hook never moves (upended in place
+// on its top lug – the stage sheets show that), so no "slew 0°" line along the load
 { const _ts = travelScene; travelScene = function (ld, tp, ...a) { if (LS_DRAW || !ld || !lsUpend(ld)) return _ts.call(this, ld, tp, ...a); const t = lsSetTilt(ld); if (t < 0.5) return _ts.call(this, ld, tp, ...a);
+    if (tp && tp.hooks && Math.abs(tp.slew || 0) < 0.5 && Math.abs((tp.R1 || 0) - (tp.R0 || 0)) < 0.1) return new Scene();
     const k = LS_SET.foot; LS_SET.foot = { ld, tilt: t }; try { return _ts.call(this, ld, tp, ...a); } finally { LS_SET.foot = k; } }; }
 // each crane's elevation at set: the load standing up, the hook over its top lifting point, the tail crane off the hook
 { const _es = elevScene; elevScene = function (cr, phase, ...a) {

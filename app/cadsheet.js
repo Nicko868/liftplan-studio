@@ -140,7 +140,11 @@ function cadDim(p0, p1, at, text, horiz = true, o = {}) {
     for (const p of [p0, p1]) { const s = Math.sign(at - p[0]) || 1; g += cadL(p[0] + s * gap, p[1], at + s * ov, p[1]); }
     const inside = y1 - y0 > 2 * CADD.ar + 10;
     g += cadL(at, inside ? y0 : y0 - 40, at, inside ? y1 : y1 + 40) + (inside ? cadArrow(at, y0, 0, -1) + cadArrow(at, y1, 0, 1) : cadArrow(at, y0, 0, 1) + cadArrow(at, y1, 0, -1));
-    const ty = (y0 + y1) / 2; g += y1 - y0 > text.length * CADD.fs * 0.55 + 20 ? cadT(at - 8, ty, text, { ...o, rot: -90 }) : cadT(at + 10, ty + 6, text, { ...o, a: "start" }); }
+    // text along the line when it fits; otherwise level, on the outer side of the dimension (away from what it measures)
+    const ty = (y0 + y1) / 2, out = Math.sign(at - p0[0]) || 1;
+    if (y1 - y0 > text.length * CADD.fs * 0.55 + 20) g += cadT(at - 8, ty, text, { ...o, rot: -90 });
+    else if (o.fitOnly) return "";   // a dimension that only repeats the level marks is left off rather than squeezed
+    else g += cadT(at + out * 10, ty + 6, text, { ...o, a: out > 0 ? "start" : "end" }); }
   return g;
 }
 // angle arc at (cx, cy) from angle a0 to a1 (radians, sheet y down), with arrows and the value

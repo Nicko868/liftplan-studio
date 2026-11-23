@@ -281,8 +281,9 @@ function craneSummary(cr) {
   out.status = out.util == null ? "na" : out.util > 100 ? "bad" : out.util > lim ? "amber" : "ok";
   if (out.gbpOk === false) out.status = "bad";
   const bdS = blockDims(cr, C);
-  if (+cr.linePull > 0 && out.TW / bdS.parts > +cr.linePull) out.warn.push(`Line pull ${fx(out.TW / bdS.parts, 2)} t per fall exceeds ${fx(cr.linePull)} t – add parts of line`);
-  if (+bdS.cap > 0 && out.TW > bdS.cap) out.warn.push(`Hook load ${fx(out.TW, 1)} t exceeds the ${fx(bdS.cap)} t hook block`);
+  // an overloaded hook block or rope is as much a stop as an overloaded chart
+  if (+cr.linePull > 0 && out.TW / bdS.parts > +cr.linePull) { out.warn.push(`Line pull ${fx(out.TW / bdS.parts, 2)} t per fall exceeds ${fx(cr.linePull)} t – add parts of line`); out.status = "bad"; }
+  if (+bdS.cap > 0 && out.TW > bdS.cap) { out.warn.push(`Hook load ${fx(out.TW, 1)} t exceeds the ${fx(bdS.cap)} t hook block`); out.status = "bad"; }
   const wp = ph.pick.warn, wsx = ph.set.warn;
   for (const w of new Set([...wp, ...wsx])) {
     out.warn.push(wp.includes(w) && wsx.includes(w) ? w : `${wp.includes(w) ? "pick" : "set"}: ${w}`);

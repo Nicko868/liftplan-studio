@@ -47,9 +47,35 @@ function groundWarnings(cr) {
   }
   return { bad: [...new Set(bad)], warn: [...new Set(warn)] };
 }
+// ---------------- cranes in the same lift standing on each other or swinging into each other ----------------
+// Each crane's plan footprint: the carrier (or crawler tracks), the outrigger beams and pads, and the mats it stands on.
+// Two footprints that overlap can't both be set up there. The superstructure's tail swing (data: up.tail) that reaches
+// the other crane's carrier / tracks, or the other crane's own tail swing, is flagged so the slews are kept apart.
+const segX = (a, b, c, d) => { const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])); return o(a, b, c) !== o(a, b, d) && o(c, d, a) !== o(c, d, b); };
+function polysTouch(A, B) { if (polyDist(A, B) === 0) return true; for (let i = 0; i < A.length; i++) for (let j = 0; j < B.length; j++) if (segX(A[i], A[(i + 1) % A.length], B[j], B[(j + 1) % B.length])) return true; return false; }
+function craneBodyPolys(cr) {
+  const C = REG.cranes[cr.model]; if (!C || C.type === "ped") return null;
+  const W = p => craneLocalToWorld(cr, p), rect = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(W), body = [], legs = [];
+  if (C.type === "cr") { const k = C.car; body.push(rect(-k.gauge / 2 - k.shoe / 2, -k.len / 2, k.gauge / 2 + k.shoe / 2, k.len / 2)); }
+  else { const k = C.car || {}, w = (+k.w || 2.8) / 2; body.push(rect(-w, +k.rear || -4, w, +k.front || 6));
+    for (const pd of cranePads(cr, C)) { const [x, y] = pd.local, f = Math.max(0.3, (+C.or?.float || 0.6) / 2); legs.push(rect(Math.min(x, 0), y - 0.25, Math.max(x, 0), y + 0.25), rect(x - f, y - f, x + f, y + f)); } }
+  const mats = matsUnderCrane(cr, C).map(m => obsPts(m));
+  return { C, body, all: [...body, ...legs, ...mats], tail: +C.up?.tail || 0 };
+}
+function craneClashWarnings(cr) {
+  const bad = [], warn = [], A = craneBodyPolys(cr); if (!A) return { bad, warn };
+  const nm = c => c.label || REG.cranes[c.model]?.short || "the other crane", me = nm(cr);
+  for (const o of plan.cranes) { if (o === cr) continue; const B = craneBodyPolys(o); if (!B) continue;
+    if (A.all.some(P => B.all.some(Q => polysTouch(P, Q)))) { bad.push(`${me}: its outriggers / mats clash with ${nm(o)}'s – the two set-ups overlap; move one crane`); continue; }
+    const d = Math.hypot(o.x - cr.x, o.y - cr.y), circ = (r, c) => circlePts(c.x, c.y, r, 24);
+    if (A.tail > 0 && B.body.some(P => polysTouch(circ(A.tail, cr), P))) warn.push(`${me}: its tail swing (R ${fx(A.tail, 1)} m) reaches ${nm(o)}'s carrier – limit the slew or move a crane`);
+    else if (A.tail > 0 && B.tail > 0 && d < A.tail + B.tail) warn.push(`${me}: its tail swing and ${nm(o)}'s overlap (${fx(d, 1)} m apart, ${fx(A.tail + B.tail, 1)} m needed) – never slew both tails towards each other`); }
+  return { bad, warn };
+}
 { const _cs = craneSummary; craneSummary = function (cr) {
     const S = _cs(cr);
-    try { const g = groundWarnings(cr); if (g.bad.length || g.warn.length) { S.ground = g; S.warn.push(...g.bad, ...g.warn); if (g.bad.length) S.status = "bad"; else if (S.status === "ok") S.status = "amber"; } } catch (e) { console.warn(e); }
+    try { const g = groundWarnings(cr), k = craneClashWarnings(cr); g.bad.push(...k.bad); g.warn.push(...k.warn);
+      if (g.bad.length || g.warn.length) { S.ground = g; S.warn.push(...g.bad, ...g.warn); if (g.bad.length) S.status = "bad"; else if (S.status === "ok") S.status = "amber"; } } catch (e) { console.warn(e); }
     return S;
   }; }
 // berthing: a vessel near the edge of an imported quay / yard deck berths along that edge too (not only along a drawn quay line)

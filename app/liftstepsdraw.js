@@ -142,7 +142,11 @@ function lsElevLoad(D, hookY) {
   let mu = -Infinity; for (const it of o.items) { if (it.t === "poly") for (const p of it.pts) mu = Math.max(mu, p[0]); else if (it.t === "circle") mu = Math.max(mu, it.c[0] + it.r); } D.maxU = mu;
   return { s: o, bottom: Number.isFinite(bottom) ? bottom : h0 };
 }
-{ const _lsr = loadSideRig; loadSideRig = function (ld, hookY, ...a) { const D = LS_DRAW || LS_SET.el; if (D && D.ld === ld && D.cur && D.s) { try { return lsElevLoad(D, hookY); } catch (e) { console.warn(e); } } return _lsr.call(this, ld, hookY, ...a); }; }
+// a crane's elevation: the load as it is at the step being drawn; and on a top and tail with a forklift the crane's hook
+// is on the top lifting point only (no bridle to both ends) – the load lies away from the crane on the forks
+{ const _lsr = loadSideRig; loadSideRig = function (ld, hookY, R, view, tandem, side, point) { const D = LS_DRAW || LS_SET.el; if (D && D.ld === ld && D.cur && D.s) { try { return lsElevLoad(D, hookY); } catch (e) { console.warn(e); } }
+    if (!tandem && ld && lsFT(ld) && !(ld.rig && ld.rig.arr)) return _lsr.call(this, ld, hookY, R, view, true, 1, "A");
+    return _lsr.call(this, ld, hookY, R, view, tandem, side, point); }; }
 
 // the height column of an elevation sits just clear of the drawing (it is set for the whole load length otherwise)
 function lsTidyElev(sc, maxU) {

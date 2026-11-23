@@ -16,7 +16,7 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   checks, every sheet's text and picture, 3D model at pick / set and Play frames). Build the old version from git HEAD in a copy.
   Real plans: push the new build as `next.html` first, compare in the browser panel with the live index.html, then replace.
 - Diagnostics: `NODE_PATH=<global node_modules> node tests/diag.js` (Playwright + Chromium) – must stay all PASS
-  (91/91 since checks follow the lift steps). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
+  (96/96 since the visual-check fixes, scenario 17). Add a diagnostic scenario for every new feature, not only regressions. The diagnostic opens
   the file with `?local` (browser-only mode); scenario 9 tests shared mode against a stand-in for Supabase.
 - Storage: all saving goes through `CAP.db` (collection / doc / onSnapshot).
   - Shared mode (default outside claude.ai): `app/cloud.js` – Supabase project `liftplan-studio`
@@ -97,6 +97,19 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
 - Sheets: a last pass (`lsSheetText`, buildSheets wrapper) drops "SSB " / "(SSB …)" from printed text; the user's own numbers
   ("SSB-004") stay. Built-in rigging names carry no company mark. Global names must be unique across app/*.js – a clashing
   top-level const stops the whole file loading (it happened with sheetClean; the full diagnostic run catches it).
+- Crane set-ups (groundcheck.js, `craneClashWarnings`): two cranes on a lift whose carrier / outriggers / mats overlap = stop;
+  a tail swing (data `up.tail`) reaching the other carrier, or two tails that can meet = warning. A hook block or rope
+  overloaded makes the crane a stop (craneSummary).
+- Top and tail with a forklift: `ld.set` = where the column STANDS (same meaning as for two cranes). lsAddForklift puts it where
+  the top end was (hook stays over the top lug); the steps only carry it further if the set is somewhere else. No bridle at
+  pick (loadRigHeight / loadSideRig treat it like a tandem hook on the top lug); no travel line when the hook doesn't move.
+- Rigging sheet, load on two cranes: each hook block called out with its own crane; parts at the left-hand end are called
+  out in the left margin (numbers facing the drawing) when they fit. End-on lifting points at one spot get one label "P1 · P2".
+  Vertical dimension text that doesn't fit goes on the outer side; `fitOnly` dims are left off (the level marks give them).
+- Elevations: level marks stand just clear of what is drawn (scene bounds), never "-0.0".
+- Samples carry a version (SAMPLE_VER): an unedited copy in the list (rev 1) is refreshed when its version goes up.
 - Real-plan check (with Nicko signed in in the Claude browser panel): open each plan read-only, every lift: checks, steps,
   buildSheets, script errors – no saving.
-- Known gaps: LTM 1230 / LTM 1130 charts not in the crane library yet; vessels have no hold model; a callout can still cross a sling line.
+- Known gaps: LTM 1230 / LTM 1130 charts not in the crane library yet (need the chart for the actual crane / counterweight /
+  outrigger set-up – import through Master data; the only public manual found is the US imperial edition); H16XD6
+  capacity plate for the actual truck; vessels have no hold model; a callout can still cross a sling line.

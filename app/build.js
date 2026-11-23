@@ -305,8 +305,10 @@ function elevationView(C, st, Ld) {
   // label just above the boom, clear of the lattice: half the boom width + half the text height + a gap
   const off = (C.boom.kind === "lattice" ? 1.6 : 0.8) + 0.9 * tk * 0.55 + 0.5;
   s.text("BOOM", [mid[0] - off * Math.sin(th * D2R), mid[1] + off * Math.cos(th * D2R)], `BOOM ${st.L.toFixed(1)} m @ ${th.toFixed(1)}°`, 0.9 * tk, { rot: th, bold: true });
-  const hx = Math.max(tip[0], st.R) + loadExtent(Ld) + (st.tandem ? (Ld.span || 0) / 2 : 0) + 1.2;
-  for (const [y, lab] of [[tip[1], `head ${tip[1].toFixed(1)} m`], [hookY, `hook ${hookY.toFixed(1)} m`], [ls.bottom, ls.bottom < st.hL - 0.05 ? `load bottom ${ls.bottom.toFixed(1)} m – hook too low` : `load bottom ${ls.bottom.toFixed(1)} m`]]) {
+  // the level marks stand just clear of what is drawn (boom head, hook, load as it is seen here) – not a load length away
+  const hx = (() => { try { const b = s.bounds(); if (b && isFinite(b[2])) return Math.max(b[2], tip[0], st.R) + 1.2; } catch (e) { } return Math.max(tip[0], st.R) + loadExtent(Ld) + 1.2; })();
+  const f1 = v => (Math.abs(v) < 0.05 ? 0 : v).toFixed(1);   // never "-0.0"
+  for (const [y, lab] of [[tip[1], `head ${f1(tip[1])} m`], [hookY, `hook ${f1(hookY)} m`], [ls.bottom, ls.bottom < st.hL - 0.05 ? `load bottom ${f1(ls.bottom)} m – hook too low` : `load bottom ${f1(ls.bottom)} m`]]) {
     s.poly("DIMS", [[hx - 0.4, y], [hx + 0.4, y]], { w: 0.8 });
     s.text("DIMS", [hx + 0.6, y - 0.3 * tk], lab, 0.85 * tk, { anchor: "start", bold: true });
   }

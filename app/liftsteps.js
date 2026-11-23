@@ -30,7 +30,11 @@ function lsCarry(ld, tp, cranes) {
 }
 // the steps: yours, or worked out from the lift
 function lsAutoSteps(ld) {
-  const up = lsUpend(ld), to = Math.max(15, Math.min(90, +(ld.upend?.to ?? 90) || 90)), moved = Math.hypot(ld.set.x - ld.pick.x, ld.set.y - ld.pick.y) > 0.5 || Math.abs((+ld.set.rot || 0) - (+ld.pick.rot || 0)) > 1;
+  const up = lsUpend(ld), to = Math.max(15, Math.min(90, +(ld.upend?.to ?? 90) || 90)); let moved = Math.hypot(ld.set.x - ld.pick.x, ld.set.y - ld.pick.y) > 0.5 || Math.abs((+ld.set.rot || 0) - (+ld.pick.rot || 0)) > 1;
+  // with a forklift the crane's hook stays over the top lug while the load turns up, so it stands where its top end was:
+  // it is "moved" only when the set position (where it stands – lsAddForklift puts it there) is somewhere else
+  if (up && lsFT(ld)) { const d = loadDims(ld), sp = tandemSpan(ld) || d.x * 0.9, aE = tiltFn(ld, { tilt: to })([-sp / 2, 0, liftPointZ(ld)]), w = (P, q) => { const v = rot2(q, -(+P.rot || 0)); return [P.x + v[0], P.y + v[1]]; }, A0 = w(ld.pick, [-sp / 2, 0]), A1 = w(ld.set, [aE[0], aE[1]]);
+    moved = Math.hypot(A1[0] - A0[0], A1[1] - A0[1]) > 0.5 || Math.abs((+ld.set.rot || 0) - (+ld.pick.rot || 0)) > 1; }
   if (up) { const fk = lsFT(ld), tail = fk ? "F" : "B", S = [{ name: fk ? "Take the weight – crane and forklift" : "Take the weight – both cranes", t: 0, h: "pick", tilt: 0 }, { name: "Lift clear, load level", t: 0, h: "lift", tilt: 0 }];
     for (let a = 15; a < to; a += 15) S.push({ name: fk ? `Upend to ${a}° – crane hoists, forklift drives in` : `Upend to ${a}° – top crane hoists, tail crane lowers`, t: 0, h: "lift", tilt: a });
     S.push({ name: fk ? (to >= 90 ? "Vertical – forklift lowers its forks clear and backs away" : `At ${to}° – forklift lowers off`) : to >= 90 ? "Vertical – tail crane lowers off and is unhooked" : `At ${to}° – tail crane lowers off`, t: 0, h: "lift", tilt: to, release: tail });
@@ -100,6 +104,7 @@ function liftSteps(ld) {
 // at fork height, and the forklift drives in under the crane as the load turns up. At vertical the forks are lowered
 // clear and the forklift backs away; the crane carries on alone. Shares by moments about the two supports (vertical
 // rope, vertical fork reaction): the tail's part stays the same at every angle until it is let go.
+// The set position is where the load ends up standing (as for two cranes): the top lug ends at the set pose's top lug.
 function lsFTSteps(ld, cranes, fo) {
   const c = cranes[0], C = REG.cranes[c.model], F = FORKLIFTS[fo.fl.model], fl = fo.fl;
   const key = `ft|${ld.id}|${plan.updated}|${plan.al}|${JSON.stringify(ld.steps || "")}|${ld.upend ?? ""}|${JSON.stringify([c.x, c.y, c.L, c.chartId, c.hookBlock, c.extra, fl, ld.pick, ld.set, ld.cog, ld.span, ld.weight, ld.rigWeight])}`;
@@ -108,7 +113,7 @@ function lsFTSteps(ld, cranes, fo) {
   const sp = tandemSpan(ld) || d.x * 0.9, xA = -sp / 2, xB = sp / 2, zl = liftPointZ(ld), supZ = fl.how === "hook" ? zl : 0, rh = ld.rig?.arr ? loadRigHeight(ld, true) : (+ld.tandemRig || 0) + zl, cl = +fl.c || F.c0;
   const cog = +ld.cog || 0, tailW = Math.max(0, Math.min(W, W * (cog - xA) / (xB - xA)));
   const rot0 = +ld.pick.rot || 0, toW = (P, q) => { const v = rot2([q[0], q[1]], -(P.rot || 0)); return [P.x + v[0], P.y + v[1]]; };
-  const A0 = toW(ld.pick, [xA, 0]), A1 = toW(ld.set, [xA, 0]), hOf = s => s.h === "pick" ? (+ld.pick.h || 0) : s.h === "set" ? (+ld.set.h || 0) : s.h === "carry" ? Math.max(+ld.pick.h || 0, +ld.set.h || 0) + 1 : s.h === "lift" ? (+ld.pick.h || 0) + 1 : (+s.h || 0);
+  const sEnd = lsSteps(ld).slice(-1)[0], aEnd = tiltFn(ld, { tilt: +sEnd?.tilt || 0 })([xA, 0, zl]), A0 = toW(ld.pick, [xA, 0]), A1 = toW(ld.set, [aEnd[0], aEnd[1]]), hOf = s => s.h === "pick" ? (+ld.pick.h || 0) : s.h === "set" ? (+ld.set.h || 0) : s.h === "carry" ? Math.max(+ld.pick.h || 0, +ld.set.h || 0) + 1 : s.h === "lift" ? (+ld.pick.h || 0) + 1 : (+s.h || 0);
   const fx0 = { id: fo.id, label: fo.label || "Forklift", color: "#b8860b", model: F.name, attach: { point: "F" } }; let lastF = null;
   const steps = lsSteps(ld).map((s0, no) => {
     const s = { ...s0 }, t = Math.max(0, Math.min(1, +s.t || 0)), tilt = +s.tilt || 0, rel = s.release === "F", TT = tiltFn(ld, { tilt }), rot = rot0 + ((+ld.set.rot || 0) - rot0) * t;

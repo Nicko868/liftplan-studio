@@ -37,6 +37,10 @@ function lsAddForklift(ld, model = "H16XD6") {
   plan.obstacles.push(o);
   for (const c2 of plan.cranes) if (c2.attach?.load === ld.id) c2.attach.point = "A";
   if (ld.upend == null) ld.upend = true;
+  // the set position is where the load stands: lifted in place, that is where its top end was (the hook stays over the top
+  // lug while the forklift drives the tail in) – set the load there unless it already has a set position of its own
+  if (Math.hypot(ld.set.x - P.x, ld.set.y - P.y) < 0.5) { const aE = tiltFn(ld, { tilt: Math.min(90, +(ld.upend?.to ?? 90) || 90) })([-sp / 2, 0, liftPointZ(ld)]), A = rot2([-sp / 2 - aE[0], -aE[1]], -(+P.rot || 0));
+    ld.set = { ...ld.set, x: +(P.x + A[0]).toFixed(2), y: +(P.y + A[1]).toFixed(2), rot: +P.rot || 0 }; }
   return o;
 }
 

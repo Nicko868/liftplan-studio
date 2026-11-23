@@ -456,7 +456,10 @@ function solveBuild(ld) {
           if (n === 2) s.poly("RIGGING", [[ox + w.x - 0.09, z1 + 0.03], [ox + w.x + 0.09, z0 - 0.03]], { w: 1.2, color: col });
         }
       }
-      for (const q of res.ptsDraw || []) { const x = U(q.p), z = Z(q.p), r = 0.11; s.circle("DIMS", [x, z], r, { fill: q.wrap ? "#fff3e6" : "#e8f1ff", w: 1, color: q.wrap ? "#e0701f" : "#1f5fa8" }); s.text("DIMS", [x + 0.28, z + 0.12], q.k, 0.26, { bold: true, color: q.wrap ? "#b85a14" : "#1f5fa8" }); }
+      // points that fall on the same spot in this view (both lugs seen end-on) get one mark and one label "P1 · P2"
+      const seen = [];
+      for (const q of res.ptsDraw || []) { const x = U(q.p), z = Z(q.p), same = seen.find(o => Math.hypot(o.x - x, o.z - z) < 0.15); if (same) { same.k.push(q.k); continue; } seen.push({ x, z, k: [q.k], wrap: q.wrap }); }
+      for (const q of seen) { const { x, z } = q, r = 0.11; s.circle("DIMS", [x, z], r, { fill: q.wrap ? "#fff3e6" : "#e8f1ff", w: 1, color: q.wrap ? "#e0701f" : "#1f5fa8" }); s.text("DIMS", [x + 0.28, z + 0.12], q.k.join(" · "), 0.26, { bold: true, color: q.wrap ? "#b85a14" : "#1f5fa8" }); }
     }
     return out;
   }; }

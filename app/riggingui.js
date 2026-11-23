@@ -493,35 +493,47 @@ function rigSheetSVG(ld) {
     const [px, py] = fv.map(U(p), Z(p));
     anchors.push({ r, px, py });
   }
-  if (fv.bd) { const hp = res.hookPts[res.hookPts.length - 1]; const [px, py] = fv.map(hp[0] + fv.bd.W * 0.3, hp[2] + fv.bd.hookLen + fv.bd.H * 0.6); anchors.unshift({ crane: true, px, py }); }
+  // the hook block of each crane on the load, at its own hook (A = first hook, B = second)
+  res.hookPts.forEach((hp, hi) => { const crh = res.hookPts.length > 1 ? (cranes.find(c => c.attach.point === (hi ? "B" : "A")) || cranes[hi]) : cranes[0], Ch = crh ? REG.cranes[crh.model] : null, bd = crh && Ch ? blockDims(crh, Ch) : null;
+    if (!bd) return; const [px, py] = fv.map(hp[0] + bd.W * 0.3, hp[2] + bd.hookLen + bd.H * 0.6); anchors.unshift({ crane: true, cr: crh, bd, hi, px, py }); });
   const colX = fv.x0 + fv.w + 30;
+  const coLines0 = (r, ch) => { const L = wrapLines(upUnits(r.name), ch), q = `  –  QTY ${r.qty}`; if ((L[L.length - 1] + q).length <= ch) L[L.length - 1] += q; else L.push(q.trim()); return L; };
   // a symmetric rig: every leader goes to the right-hand twin of its part, so no leader crosses the drawing
   { const [xc0] = fv.map(+ld.cog || 0, 0), sym = Math.abs(+ld.cog || 0) < 0.5 && (res.hookPts || []).length === 1; if (sym) for (const a of anchors) if (!a.crane && a.px < xc0 - 2) a.px = 2 * xc0 - a.px; }
   anchors.sort((a, b) => a.py - b.py);
+  // two hooks (a load on two cranes): the parts at the left-hand end are called out in a column in the left margin, above
+  // the level marks, numbers facing the drawing – so no leader runs across the load to the right-hand column. Only when
+  // they all fit there; otherwise everything stays in the right-hand column.
+  let colL = null;
+  if (res.hookPts.length > 1) { const [xc0] = fv.map(+ld.cog || 0, 0), [xEnd] = fv.map(-d.x / 2, 0), edge = Math.min(fv.x0 - 30, xEnd - 180), chars = Math.floor((edge - 44 - (M + 30)) / 10.5);
+    const yTop = fv.map(0, Math.max(...res.hookPts.map(h => h[2])))[1] - 60, left = anchors.filter(a => a.px < xc0);
+    if (chars >= 18 && left.length) { const c = { x: edge, chars, right: true }, need = left.reduce((n, a) => n + 96 + (a.crane ? 48 : Math.max(0, coLines0(a.r, chars).length) * 24), 0);
+      if (M + 130 + need <= yTop) { colL = c; left.forEach(a => a.col = c); } } }
   // your own adjustments from the sheet preview: label moved (dx, dy), point moved (ax, ay), wording changed (text)
   const OV = (ld.sheetEdits && ld.sheetEdits.co) || {};
   // every callout gets a slot: stacked down the column, and if the column would run past the drawing area
   // (onto the parts list) it is pushed back up and, if needed, the spacing is tightened – no item is ever left off
   const coChars = Math.max(24, Math.floor(((ev ? ev.x0 - 56 : W - M - 20) - (colX + 44)) / 10.5));
-  const coLines = r => { const L = wrapLines(upUnits(r.name), coChars), q = `  –  QTY ${r.qty}`; if ((L[L.length - 1] + q).length <= coChars) L[L.length - 1] += q; else L.push(q.trim()); return L; };
-  for (const a of anchors) a.ex = a.crane ? 24 : Math.max(0, coLines(a.r).length - 1) * 24;   // extra height of a wrapped label
-  { const yMax = bandY - 70, yMin = M + 110; let gap = 96;
-    const stack = () => { let last = -1e9, ex = 0; for (const a of anchors) { a.ty = Math.max(a.py, last + gap + ex); last = a.ty; ex = a.ex; }
-      let next = yMax + gap; for (let i = anchors.length - 1; i >= 0; i--) { anchors[i].ty = Math.min(anchors[i].ty, next - gap - anchors[i].ex); next = anchors[i].ty; } };
-    stack(); while (anchors.length && anchors[0].ty < yMin && gap > 52) { gap -= 6; stack(); } }
+  const coLines = (r, ch = coChars) => coLines0(r, ch);
+  for (const a of anchors) a.ex = a.crane ? 24 : Math.max(0, coLines(a.r, a.col ? a.col.chars : coChars).length - 1) * 24;   // extra height of a wrapped label
+  { const yMax = bandY - 70, yMin = M + 110, R = anchors.filter(a => !a.col), Lf = anchors.filter(a => a.col); let gap = 96;
+    const stack = () => { let last = -1e9, ex = 0; for (const a of R) { a.ty = Math.max(a.py, last + gap + ex); last = a.ty; ex = a.ex; }
+      let next = yMax + gap; for (let i = R.length - 1; i >= 0; i--) { R[i].ty = Math.min(R[i].ty, next - gap - R[i].ex); next = R[i].ty; } };
+    stack(); while (R.length && R[0].ty < yMin && gap > 52) { gap -= 6; stack(); }
+    let y = yMin + 20; for (const a of Lf) { a.ty = y; y += 96 + a.ex; } }   // left margin column: top down, in the order of the parts' heights
   // callout text wraps before it reaches the detail boxes (or the sheet edge)
   for (const a of anchors) {
     const ty = a.ty;
-    const id = a.crane ? "hook" : "r" + a.r.no, o = OV[id] || {};
+    const id = a.crane ? (a.hi === res.hookPts.length - 1 ? "hook" : "hook" + a.hi) : "r" + a.r.no, o = OV[id] || {};
     const auto = a.crane
-      ? [`${fv.cr.label} HOOK BLOCK`, `${blockName(fv.bd)} SWL ${fx(fv.bd.cap, 0)} t`, `${fv.bd.parts} part${fv.bd.parts > 1 ? "s" : ""} of line`]
-      : [...coLines(a.r), `SWL ${fmtT(a.r.swl)} t`];
+      ? [`${a.cr.label} HOOK BLOCK`, `${blockName(a.bd)} SWL ${fx(a.bd.cap, 0)} t`, `${a.bd.parts} part${a.bd.parts > 1 ? "s" : ""} of line`]
+      : [...coLines(a.r, a.col ? a.col.chars : coChars), `SWL ${fmtT(a.r.swl)} t`];
     const lines = o.text != null ? String(o.text).split("\n") : auto;
-    const lx = colX + (+o.dx || 0), ly = ty + (+o.dy || 0), ax = a.px + (+o.ax || 0), ay = a.py + (+o.ay || 0);
-    g += `<g data-co="${id}" data-kind="lead"><polyline points="${ax},${ay} ${lx - 24},${ly} ${lx - 2},${ly}" fill="none" stroke="#111" stroke-width="${CAD.px(CAD.lw.thin).toFixed(2)}"/></g><circle data-co="${id}" data-kind="anchor" cx="${ax}" cy="${ay}" r="4.5" fill="#111"/>`;
+    const lx = (a.col ? a.col.x : colX) + (+o.dx || 0), ly = ty + (+o.dy || 0), ax = a.px + (+o.ax || 0), ay = a.py + (+o.ay || 0), rt = !!(a.col && a.col.right), sg = rt ? -1 : 1;
+    g += `<g data-co="${id}" data-kind="lead"><polyline points="${ax},${ay} ${lx - sg * 24},${ly} ${lx - sg * 2},${ly}" fill="none" stroke="#111" stroke-width="${CAD.px(CAD.lw.thin).toFixed(2)}"/></g><circle data-co="${id}" data-kind="anchor" cx="${ax}" cy="${ay}" r="4.5" fill="#111"/>`;
     g += `<g data-co="${id}" data-kind="label" data-auto="${e(auto.join("\n"))}">`;
-    if (!a.crane) g += `<circle cx="${lx + 17}" cy="${ly}" r="18" fill="#fff" stroke="#111" stroke-width="${CAD.px(CAD.lw.mid).toFixed(2)}"/><text x="${lx + 17}" y="${ly + 7}" font-size="20" font-weight="700" text-anchor="middle" fill="#16202a">${a.r.no}</text>`;
-    lines.filter(Boolean).forEach((t, i) => g += `<text x="${lx + (a.crane ? 0 : 44)}" y="${ly + 7 + i * 24}" font-size="${i ? 19 : 21}" font-weight="${i ? 400 : 700}" fill="${i ? "#3d4a57" : "#16202a"}">${e(t)}</text>`);
+    if (!a.crane) g += `<circle cx="${lx + sg * 17}" cy="${ly}" r="18" fill="#fff" stroke="#111" stroke-width="${CAD.px(CAD.lw.mid).toFixed(2)}"/><text x="${lx + sg * 17}" y="${ly + 7}" font-size="20" font-weight="700" text-anchor="middle" fill="#16202a">${a.r.no}</text>`;
+    lines.filter(Boolean).forEach((t, i) => g += `<text x="${lx + sg * (a.crane ? 0 : 44)}" y="${ly + 7 + i * 24}" font-size="${i ? 19 : 21}" font-weight="${i ? 400 : 700}" fill="${i ? "#3d4a57" : "#16202a"}"${rt ? ` text-anchor="end"` : ""}>${e(t)}</text>`);
     g += `</g>`;
   }
   // CAD dimensions – front view: lengths below the ground, a chain of heights on the left, sling angles as arcs, the CoG centre line
@@ -544,7 +556,7 @@ function rigSheetSVG(ld) {
     const xF = Math.min(xl0, fv.map(Math.min(...res.seg.flatMap(q => [q.a[0], q.b[0]])), 0)[0]) - 30, xC = xF - 50, xO = xC - 70;
     const ys = lvl.map(([z]) => fv.map(0, z)[1]);
     for (let i = 1; i < lvl.length; i++) { const hgt = lvl[i][0] - lvl[i - 1][0]; if (hgt < 0.05) continue; g += cadDim([xF, ys[i - 1]], [xF, ys[i]], xC, `${fx(hgt, 2)}`, false); }
-    g += cadDim([xF, ys[0]], [xF, ys[ys.length - 1]], xO, `${fx(hp[2], 2)} m to the hook`, false);
+    g += cadDim([xF, ys[0]], [xF, ys[ys.length - 1]], xO, `${fx(hp[2], 2)} m to the hook`, false, { fitOnly: true });   // the HOOK level mark gives it too
     let prev = 1e9; lvl.forEach(([z, n], i) => { const yy = Math.min(ys[i], prev - 26); prev = yy; g += cadLevel(xO - 22, yy, z, n); });
     // sling angles to the vertical (β – UK / LEEA practice) as arcs at the lower end of each leg
     const zTopBeam = res.beam ? res.beam.a[2] + res.beam.h : null;

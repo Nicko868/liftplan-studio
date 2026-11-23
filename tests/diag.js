@@ -518,6 +518,38 @@ const check = (name, ok, info = '') => { results.push({ name, ok: !!ok, info });
       check('Sheets never print a company mark in equipment names; the user\'s own plan numbers stay', !g.mark && g.own && g.lib === 0, JSON.stringify(g));
       check('No script errors in the step-based checks', !p._errs.length, p._errs.slice(0, 3).join(' | '));
     }
+    // ---------- 17. visual check fixes: cranes on each other, hook block overload, forklift set = where the column stands, rigging callouts ----------
+    {
+      p = await b.newPage({ viewport: { width: 1500, height: 950 } }); p._errs = []; p.on('pageerror', e => p._errs.push(e.message));
+      await p.goto('file://' + FILE + '?local'); await p.waitForTimeout(900);
+      const g = await p.evaluate(async () => { const out = {};
+        // two cranes set up on top of each other (the column sample as it was) → stop; close but clear with tails that can meet → warning
+        openPlan(clone(SAMPLE_PLANS[1].plan)); renderAll(); out.clean = plan.cranes.map(c => craneSummary(c).warn.filter(w => /clash with|tail swing/.test(w)).length);
+        const t = plan.cranes[1], mv = dx => { t.x += dx; for (const o of plan.obstacles) if (o.type === 'mat' && o.x > 6) o.x += dx; renderAll(); };
+        mv(-1.5); const T = craneSummary(t); out.tail = T.warn.some(w => /tail swing \(R [\d.]+ m\) reaches Main crane/.test(w)) && !T.warn.some(w => /clash with/.test(w));   // the sample as it was
+        mv(-3); const S = craneSummary(t); out.clash = S.status === 'bad' && S.warn.some(w => /clash with Main crane/.test(w));
+        // hook block too small for the hook load → the crane is a stop, not "ok"
+        openPlan(clone(SAMPLE_PLANS[1].plan)); const m = plan.cranes[0]; m.blockCap = 40; m.hookBlock = 0.45; renderAll(); const B = craneSummary(m); out.block = B.status === 'bad' && B.warn.some(w => /hook block/.test(w));
+        // forklift: the steps end with the column standing at the set position, the set elevation has the hook over the top lug, no bridle at pick
+        openPlan(clone(SAMPLE_PLANS[3].plan)); renderAll(); const ld = plan.loads[0], L = liftSteps(ld), e = L.steps[L.steps.length - 1];
+        out.ftSet = Math.hypot(e.pose.x - ld.set.x, e.pose.y - ld.set.y) < 0.05 && !L.steps.some(s => /set position/.test(s.name));
+        const ep = elevScene(plan.cranes[0], 'pick'), es = elevScene(plan.cranes[0], 'set'), txt = sc => sc.scene.items.filter(i => i.t === 'text').map(i => i.s).join('|');
+        out.ftElev = /hook 2\.9 m/.test(txt(ep)) && /load bottom 0\.0 m/.test(txt(ep)) && !/-0\.0/.test(txt(ep) + txt(es));
+        const tp = travelPath(ld); out.ftTravel = !tp || travelScene(ld, tp).items.length === 0;
+        // a fresh forklift tail: lsAddForklift puts the set where the column will stand
+        const q = clone(SAMPLE_PLANS[0].plan); openPlan(q); plan.cranes.splice(1); const l2 = plan.loads[0]; l2.set = { ...l2.pick }; lsAddForklift(l2); renderAll(); const L2 = liftSteps(l2), e2 = L2.steps[L2.steps.length - 1];
+        out.ftNew = Math.hypot(e2.pose.x - l2.set.x, e2.pose.y - l2.set.y) < 0.05 && Math.hypot(l2.set.x - l2.pick.x, l2.set.y - l2.pick.y) > 5;
+        // rigging sheet, load on two cranes: each hook block labelled with its own crane; left-end parts called out on the left (no leader across the load)
+        openPlan(clone(SAMPLE_PLANS[0].plan)); renderAll(); const sh = await buildSheets(), r = sh.find(x => /rigging/.test(x.name)), svg = r ? r.svg : '';
+        out.hooks = (svg.match(/HOOK BLOCK</g) || []).length; out.both = /Crane 1[^<]*HOOK BLOCK/.test(svg) && /Crane 2[^<]*HOOK BLOCK/.test(svg); out.leftCol = /text-anchor="end"[^>]*>(ROUND|MASTER|BOW|SHACKLE)/.test(svg);
+        out.pp = /P1 · P2/.test(svg) || /P2 · P1/.test(svg);
+        return out; });
+      check('Two cranes set up on top of each other are a stop; tails that can meet are flagged; the samples are clear', g.clash && g.tail && g.clean.every(n => n === 0), JSON.stringify(g));
+      check('A hook block or rope too small for the hook load makes the crane a stop', g.block, JSON.stringify(g));
+      check('Top and tail with a forklift: set = where the column stands (steps end there, hook over the top lug, no bridle, no "slew 0°" travel)', g.ftSet && g.ftElev && g.ftTravel && g.ftNew, JSON.stringify(g));
+      check('Rigging sheet for a load on two cranes: each crane\'s hook block called out, left-end parts on the left, end-on points labelled once', g.hooks === 2 && g.both && g.leftCol && g.pp, JSON.stringify(g));
+      check('No script errors in the visual-check scenario', !p._errs.length, p._errs.slice(0, 3).join(' | '));
+    }
   } catch (e) { check('Diagnostic run completed', false, e.message); }
   await b.close();
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ date: new Date().toISOString(), file: FILE, results }, null, 1));
