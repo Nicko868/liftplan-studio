@@ -505,10 +505,10 @@ function rigSheetSVG(ld) {
   // the level marks, numbers facing the drawing – so no leader runs across the load to the right-hand column. Only when
   // they all fit there; otherwise everything stays in the right-hand column.
   let colL = null;
-  if (res.hookPts.length > 1) { const [xc0] = fv.map(+ld.cog || 0, 0), [xEnd] = fv.map(-d.x / 2, 0), edge = Math.min(fv.x0 - 30, xEnd - 180), chars = Math.floor((edge - 44 - (M + 30)) / 10.5);
+  if (res.hookPts.length > 1) try { const [xc0] = fv.map(+ld.cog || 0, 0), [xEnd] = fv.map(-d.x / 2, 0), edge = Math.min(fv.x0 - 30, xEnd - 180), chars = Math.floor((edge - 44 - (M + 30)) / 10.5);
     const yTop = fv.map(0, Math.max(...res.hookPts.map(h => h[2])))[1] - 60, left = anchors.filter(a => a.px < xc0);
     if (chars >= 18 && left.length) { const c = { x: edge, chars, right: true }, need = left.reduce((n, a) => n + 96 + (a.crane ? 48 : Math.max(0, coLines0(a.r, chars).length) * 24), 0);
-      if (M + 130 + need <= yTop) { colL = c; left.forEach(a => a.col = c); } } }
+      if (M + 130 + need <= yTop) { colL = c; left.forEach(a => a.col = c); } } } catch (e) { console.warn(e); colL = null; anchors.forEach(a => delete a.col); }   // anything odd: all in the right-hand column as before
   // your own adjustments from the sheet preview: label moved (dx, dy), point moved (ax, ay), wording changed (text)
   const OV = (ld.sheetEdits && ld.sheetEdits.co) || {};
   // every callout gets a slot: stacked down the column, and if the column would run past the drawing area

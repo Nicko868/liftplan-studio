@@ -108,8 +108,11 @@ Owner: Nicko (lift planning, Senegal Supply Base). Keep replies short and in pla
   Vertical dimension text that doesn't fit goes on the outer side; `fitOnly` dims are left off (the level marks give them).
 - Elevations: level marks stand just clear of what is drawn (scene bounds), never "-0.0".
 - Samples carry a version (SAMPLE_VER): an unedited copy in the list (rev 1) is refreshed when its version goes up.
+- Rigging sheet left-margin callouts fall back to the right-hand column on any error (a sheet must always build).
 - Real-plan check (with Nicko signed in in the Claude browser panel): open each plan read-only, every lift: checks, steps,
   buildSheets, script errors – no saving.
+- Not yet checked on the real plans: the 23 Nov visual-check fixes went live 24 Nov without the browser panel (Nicko said go
+  ahead) – run the real-plan check next time the panel is connected.
 - Known gaps: LTM 1230 / LTM 1130 charts not in the crane library yet (need the chart for the actual crane / counterweight /
   outrigger set-up – import through Master data; the only public manual found is the US imperial edition); H16XD6
   capacity plate for the actual truck; vessels have no hold model; a callout can still cross a sling line.
